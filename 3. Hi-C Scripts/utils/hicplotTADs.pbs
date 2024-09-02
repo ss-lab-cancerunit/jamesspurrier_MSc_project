@@ -1,0 +1,25 @@
+#!/usr/bin/bash
+
+#PBS -N hicplotTADs
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=6:mem=32gb
+
+#Sets current directory to working
+cd ${PBS_O_WORKDIR}
+
+# Ensure latest version of HiCExplorer in installed with: conda install hicexplorer=3.7.2 -c bioconda -c conda-forge
+
+module load anaconda3/personal
+source activate hicexplorer
+
+
+resolution=40000
+norm=iced
+# Create inpath and outpaths
+tracks=$HOME/ThesisProject/scripts/hic/hicvis
+inpath=$HOME/data/SRP107308/hicexplorer/hicconvertformat/iced
+prefix=_merge_${resolution}_${norm}
+outpath=$HOME/data/SRP107308/hicexplorer/hicvisualisations
+
+hicPlotTADs --tracks ${tracks}/tracks.ini --region chr2:155,517,417-159,341,291 \
+-t 'chr2 CYTIP loci. 786-M1A cells' -o ${outpath}/tads.pdf

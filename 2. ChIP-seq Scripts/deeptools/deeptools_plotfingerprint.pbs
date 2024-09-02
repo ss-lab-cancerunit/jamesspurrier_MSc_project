@@ -1,0 +1,63 @@
+#!/usr/bin/bash
+
+#PBS -N deeptoolsPlotfingerprint_786
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=8:mem=64gb
+#PBS -J 1-2
+#Sets current directory to working
+cd ${PBS_O_WORKDIR}
+
+module load anaconda3/personal
+source activate deeptools
+
+# SETUP FOR PBS ARRAY
+# COMMENT OUT FOR SINGLE BATCH SUBMISSIONS
+#####################################################################################
+## Setup PBS array and assign file names stored in metadata using PBS_ARRAY_INDEX
+#####################################################################################
+metadata=$HOME/ThesisProject/metadata/chipseq/SRP104404/metadata_plotfingerprint.csv
+chip1=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $2}' ${metadata})
+chip2=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $3}' ${metadata})
+chip3=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $4}' ${metadata})
+chip4=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $5}' ${metadata})
+input1=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $6}' ${metadata})
+input2=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $7}' ${metadata})
+
+lab1=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $8}' ${metadata})
+lab2=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $9}' ${metadata})
+lab3=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $10}' ${metadata})
+lab4=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $11}' ${metadata})
+lab5=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $12}' ${metadata})
+lab6=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $13}' ${metadata})
+
+cellline=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $14}' ${metadata})
+#####################################################################################
+
+# File extensions
+bam=_blacklisted.bam
+outformat=pdf 
+
+# Create inpath and outpaths
+inpath=$EPHEMERAL/SRP104404/bamfiles
+outpath=$HOME/ThesisProject/results/chipseq/SRP104404/deeptools
+output=${outpath}/plotFingerprint_${cellline}.${outformat}
+
+#####################################################################################
+# input files
+#####################################################################################
+bam1=${inpath}/${chip1}${bam}
+bam2=${inpath}/${chip2}${bam}
+bam3=${inpath}/${chip3}${bam}
+bam4=${inpath}/${chip4}${bam}
+bam5=${inpath}/${input1}${bam}
+bam6=${inpath}/${input2}${bam}
+
+# creates outpath if it doesn't exist
+mkdir -p ${outpath}
+
+plotFingerprint \
+ -b  ${bam1} ${bam2} ${bam3} ${bam4} ${bam5} ${bam6} \
+--labels ${lab1} ${lab2} ${lab3} ${lab4} ${lab5} ${lab6} \
+--minMappingQuality 30 --skipZeros \
+--plotFile ${output} \
+--outRawCounts ${output}.tab

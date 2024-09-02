@@ -1,0 +1,19 @@
+#!/bin/bash
+
+#PBS -N SRAfasterq-dump
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=8:mem=64gb
+
+#Set virtual work directory
+cd ${PBS_O_WORKDIR}
+
+#Load sratools/3.1.0 module and parallel from user directory
+module purge
+module load parallel
+module load sratoolkit
+
+#Create output directory if doesnt exist
+mkdir -p $EPHEMERAL/fastqdump/SRP107308
+
+#fasterq-dump needs output directory specified with -O /path-to-directory/
+cat $HOME/accessions/SRP107308.txt | parallel fasterq-dump -O $EPHEMERAL/fastqdump/SRP107308

@@ -1,0 +1,27 @@
+#!/bin/bash
+
+#PBS -N Star_gGenerate_single
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=8:mem=64gb
+
+#Set virtual work directory
+cd ${PBS_O_WORKDIR}
+
+#Load STAR module
+module load STAR/2.7.11b
+
+# Create input and output directories
+genomeDir=$HOME/data/reference_genome/gencode/GRCh38/star/single
+faPath=$HOME/data/reference_genome/gencode/GRCh38/GRCh38.primary_assembly.genome.fa
+gtfPath=$HOME/data/reference_genome/gencode/GRCh38/gencode.v45.primary_assembly.annotation.gtf
+# create outpath for genome indices
+mkdir -p ${genomeDir}
+
+#Run STAR with the following options
+STAR \
+--runThreadN 8 \
+--runMode genomeGenerate \
+--genomeDir ${genomeDir} \
+--genomeFastaFiles ${faPath} \
+--sjdbGTFfile ${gtfPath} \
+--sjdbOverhang 75

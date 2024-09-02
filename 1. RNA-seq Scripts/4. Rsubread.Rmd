@@ -1,0 +1,74 @@
+---
+title: "Rsubread_gene_quantification"
+author: "James Spurrier"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(Rsubread)
+```
+
+```{r}
+studyID <- paste0("SRP406132")
+inpath <- file.path("/rds/general/user/js6723/ephemeral/exdata")
+bamDir <- file.path(inpath, studyID, "bamfiles")
+genomeRefDir <- file.path("data/reference_genome/gencode/GRCh38")
+resultsDir <- file.path("data/exdata/", studyID)
+```
+
+```{r}
+dir.create(resultsDir)
+```
+
+```{r}
+README <-   'Rsubread v2.16.1 gene quantification
+Mapping settings: GTF.featureType = "exon", GTF.attrType = "gene_id", strandSpecific = 0, allowMultiOverlap = FALSE
+Reference genome: gencode.v45.primary'
+
+cat(README, file = file.path(resultsDir, "README.txt"))
+```
+
+
+```{r}
+bamlist <- list.files(bamDir, pattern=".bam$", all.files=TRUE, full.names=TRUE)
+# bamfiles <- bamlist[1:4]
+
+gtfFile <- list.files(genomeRefDir, pattern="annotation.gtf$", all.files=T, full.names = T)
+```
+
+Run Rsubread:
+
+```{r}
+feature_counts <- featureCounts(files = bamfiles,
+                       GTF.featureType="exon",
+                       GTF.attrType="gene_id",
+                       primaryOnly = TRUE,
+                       annot.ext=gtfFile,
+                       isGTFAnnotationFile=TRUE,
+                       strandSpecific = 0,
+                       allowMultiOverlap = FALSE,
+                       nthreads = 4)
+```
+
+```{r}
+exp.RData <- paste0("featurecounts_", studyID, ".RData")
+save(feature_counts, file = file.path(resultsDir, exp.RData))
+
+rawCounts <- as.data.frame(feature_counts$counts) %>% rownames_to_column(var = "geneID")
+
+exp.csv <- paste0("featurecounts_", studyID, ".csv")
+write.csv(rawCounts, file = file.path(resultsDir, exp.csv), row.names = FALSE)
+```
+
+```{r}
+stats <- feature_counts$stat
+
+stats.csv <- paste0("featurecounts_", studyID, "_stats.csv")
+write.csv(stats, file = file.path(resultsDir, stats.csv), row.names = FALSE)
+```

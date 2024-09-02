@@ -1,0 +1,73 @@
+#PBS -N hicpro2fithic
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=2:mem=10gb
+#PBS -J 1-6
+
+## This script converts HicPro v3.1.0 sparse upper matrix to fithic file format
+## Fithic assigns statistical significance to HiC contact interactions
+## https://github.com/ay-lab/fithic
+
+#####################################################################################
+## Sets work directory to current
+#####################################################################################
+cd ${PBS_O_WORKDIR}
+
+#####################################################################################
+## Load modules 
+## hicpro2fithic require python to be available on system path
+#####################################################################################
+module load anaconda3/personal
+source activate hic-pro
+
+#####################################################################################
+## SETUP FOR PBS ARRAY JOB 
+## Print row/column info stored in metadata.csv based on assigned PBS_ARRAY_INDEX
+#####################################################################################
+metadata=$HOME/ThesisProject/metadata/hic/SRP107308/metadata_fithic2.csv
+sampleID=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $2}' ${metadata})
+# samplename=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $3}' ${metadata})
+
+#####################################################################################
+## Specify input and output directories
+#####################################################################################
+res=20000
+samplename=${sampleID}_merge
+inpath=$HOME/data/SRP107308/hicpro/matrix/upper/${samplename}
+outpath=$HOME/data/SRP107308/hicpro/hicpro2fithic/${samplename}_${res}
+
+#####################################################################################
+## creates outpath if it doesn't exist
+#####################################################################################
+mkdir -p ${outpath}
+
+#####################################################################################
+## input files
+#####################################################################################
+matpath=${inpath}/raw/${res}/${samplename}_${res}.matrix
+bedpath=${inpath}/raw/${res}/${samplename}_${res}_abs.bed
+biases=${inpath}/iced/${res}/${samplename}_${res}_iced.matrix.biases
+
+#####################################################################################
+## Convert HiC-Pro output to fithic using hicpro utility HiCPro2FitHiC
+## -i MATRIX, --matrix MATRIX     Input matrix file with raw contact frequencies. Required.
+## -b BED, --bed BED     BED file with bins coordinates. Required.
+## -s BIAS, --bias BIAS     The bias file provided after IC normalization.
+## -o OUTPUT, --output OUTPUT     Output path.
+## -r RESOLUTION, --resolution RESOLUTION     Resolution of the matrix.
+#####################################################################################
+$HOME/bin/HiC-Pro_3.1.0/bin/utils/hicpro2fithic.py \
+-i ${matpath} \
+-b ${bedpath} \
+-s ${biases} \
+-o ${outpath} \
+-r ${res} &&
+
+#####################################################################################
+## Hicpro2fithic doesnt name files correctly, rename files manually
+#####################################################################################
+mv ${outpath}/fithic.interactionCounts.gz ${outpath}/${samplename}_${res}.interactionCounts.gz
+mv ${outpath}/fithic.fragmentMappability.gz ${outpath}/${samplename}_${res}.fragmentMappability.gz
+mv ${outpath}/fithic.biases.gz ${outpath}/${samplename}_${res}.biases.gz &&
+# Fix error in output by removing NA values
+zcat ${outpath}/${samplename}_${res}.biases.gz | grep -v '^$' | gzip > ${outpath}/${samplename}_${res}.biases_fixed.gz
+

@@ -1,0 +1,103 @@
+#PBS -N fastqToBlacklistedBam
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=20:mem=100gb
+#PBS -J 1-25
+
+## This script aligns ChiPseq reads to genome GRCh38 (ucsc) and outputs sorted, blacklisted bam files
+## using BWA-mem2, samtools and bedtools
+## Encode GRCh38 blacklist: https://www.encodeproject.org/files/ENCFF356LFX/
+
+#####################################################################################
+## Sets work directory to current
+#####################################################################################
+cd ${PBS_O_WORKDIR}
+
+
+#####################################################################################
+## Load bwa-mem2, samtools and bedtools modules
+#####################################################################################
+module purge
+module load bwa-mem2/2.2.1
+module load samtools/1.19.2
+module load bedtools/2.31.0
+
+#####################################################################################
+## SETUP FOR PBS ARRAY
+## Print row/column info stored in metadata.csv based on assigned PBS_ARRAY_INDEX
+#####################################################################################
+metadata=$HOME/ThesisProject/metadata/chipseq/SRP104404/metadata_chipseq_pre.csv
+SRR=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $2}' ${metadata})
+sampleID=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $6}' ${metadata})
+fq=${SRR}.fastq
+
+#####################################################################################
+## Set input and output directories
+#####################################################################################
+inpath=$EPHEMERAL/SRP104404/fastq
+outpath=$EPHEMERAL/SRP104404/bamfiles
+output=${outpath}/${sampleID}
+
+#####################################################################################
+## Path to reference genome and blacklist files
+#####################################################################################
+gRef=$HOME/data/reference_genome/gencode/GRCh38/bwa/bwaIndex
+blacklist=$HOME/data/reference_genome/gencode/GRCh38/blacklist/ENCFF356LFX.bed
+
+#####################################################################################
+## creates outpath directory if it's not already there
+#####################################################################################
+mkdir -p ${outpath}
+
+#####################################################################################
+## Assign cpu task threads as variable
+#####################################################################################
+bwacpu=16
+samcpu=4
+
+#####################################################################################
+## Map raw reads to GRCh38 reference indexed genome, stream to samtools view to output bams then
+## sort by coord with samtools sort
+#####################################################################################
+call="bwa-mem2 mem -t ${bwacpu} ${gRef} ${inpath}/${fq} \
+| samtools view -b \
+| samtools sort -@ ${samcpu} -o ${output}.bam"
+echo $call
+eval $call &&
+
+#####################################################################################
+## Index sorted by coord bams with samtools index
+#####################################################################################
+call="samtools index -@ ${samcpu} ${output}.bam"
+echo $call
+eval $call &&
+
+#####################################################################################
+## Filter out reads overlapping blacklisted regions with bedtools intersect, stream to samtools sort.  
+#####################################################################################
+call="bedtools intersect -abam ${output}.bam -b ${blacklist} -v | samtools sort -@ ${samcpu} -o ${output}_blacklisted.bam"
+echo $call
+eval $call &&
+
+#####################################################################################
+## Index the blacklisted bam file
+#####################################################################################
+call="samtools index -@ ${samcpu} ${output}_blacklisted.bam"
+echo $call
+eval $call &&
+
+#####################################################################################
+## Generate summary statistics using samtools stats
+#####################################################################################
+call="samtools idxstats ${output}_blacklisted.bam > ${output}.idxstats"
+echo $call
+eval $call &&
+
+## call="samtools flagstat ${output}_blacklisted.bam > ${output}.flagstat"
+## echo $call
+## eval $call &&
+
+call="samtools stats ${output}_blacklisted.bam > ${output}.stats"
+echo $call
+eval $call
+
+

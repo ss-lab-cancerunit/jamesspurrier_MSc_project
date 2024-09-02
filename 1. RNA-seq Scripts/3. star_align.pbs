@@ -1,0 +1,52 @@
+#PBS -N star_align_SRP104161
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=8:mem=64gb
+#PBS -J 1-8
+
+#####################################################################################
+## Sets work directory to current
+#####################################################################################
+cd ${PBS_O_WORKDIR}
+
+#####################################################################################
+## Load STAR module
+#####################################################################################
+module purge
+module load STAR/2.7.11b
+
+#####################################################################################
+## SETUP FOR PBS ARRAY
+## Print row/column info stored in metadata.csv based on assigned PBS_ARRAY_INDEX
+#####################################################################################
+metadata=$HOME/ThesisProject/metadata/rnaseq/SRP104161/SRP104161_SampleSheet.csv
+SRR=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $2}' ${metadata})
+studyID=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $3}' ${metadata})
+
+#####################################################################################
+## Set input and output directories
+#####################################################################################
+prefix=$EPHEMERAL/${studyID}
+inpath=$EPHEMERAL/${studyID}/fastq
+input=${inpath}/${SRR}.fastq
+#fq1=${inpath}/${SRR}_1.fastq
+#fq2=${inpath}/${SRR}_2.fastq
+outpath=${prefix}/bamfiles
+output=${outpath}/${SRR}
+genomeDir=$HOME/data/reference_genome/gencode/GRCh38/star/single
+
+# creates directory if it's not already there
+mkdir -p ${outpath}
+
+# Set required cpu cores
+ncpus=8
+#####################################################################################
+## Run STAR with the following options
+#####################################################################################
+STAR \
+--runThreadN ${ncpus} \
+--genomeDir ${genomeDir} \
+--quantMode GeneCounts \
+--readFilesIn ${input} \
+--outSAMtype BAM SortedByCoordinate \
+--outReadsUnmapped Fastx \
+--outFileNamePrefix ${output}.

@@ -1,0 +1,35 @@
+#PBS -N bwamem2index
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=10:mem=100gb
+
+## This script builds BWA indices for GRCh38 primary assembly reference genome
+## Uses hg38.analysisSet.fa as recommended for alignment and general analysis
+## https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/analysisSet/hg38.analysisSet.fa.gz 
+#####################################################################################
+## Sets work directory to current
+#####################################################################################
+cd ${PBS_O_WORKDIR}
+
+#####################################################################################
+## Load bwa-mem2
+#####################################################################################
+module purge
+module load bwa-mem2/2.2.1
+
+#####################################################################################
+## Specify input and output directories
+#####################################################################################
+inpath=$HOME/data/reference_genome/ucsc/hg38
+outpath=${inpath}/bwa
+
+#####################################################################################
+## creates outpath if it doesn't exist
+#####################################################################################
+mkdir -p ${outpath}
+
+#####################################################################################
+## Build bwa index
+#####################################################################################
+bwa-mem2 index -p ${outpath}/bwaIndex ${inpath}/hg38.analysisSet.fa
+
+

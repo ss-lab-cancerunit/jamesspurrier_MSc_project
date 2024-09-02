@@ -1,0 +1,52 @@
+#!/usr/bin/bash
+
+#PBS -N hicCorrelate
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=8:mem=64gb
+#PBS -J 1-2
+#Sets current directory to working
+cd ${PBS_O_WORKDIR}
+
+module load anaconda3/personal
+source activate hicexplorer
+
+# SETUP FOR PBS ARRAY
+# COMMENT OUT FOR SINGLE BATCH SUBMISSIONS
+#####################################################################################
+## Setup PBS array and assign file names stored in metadata using PBS_ARRAY_INDEX
+#####################################################################################
+metadata=$HOME/ThesisProject/metadata/hic/SRP107308/metadata_hicCorrelate.csv
+samp1=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $2}' ${metadata})
+samp2=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $3}' ${metadata})
+samp3=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $4}' ${metadata})
+samp4=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $5}' ${metadata})
+
+exp=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $6}' ${metadata})
+#####################################################################################
+
+# HiC-Pro outputs subsampled matrices at various resolutions with and without ICED normalisation.
+# Specify which resolution/normalisation to convert
+resolution=40000
+norm=iced
+matformat=h5
+outformat=pdf
+# Create inpath and outpaths
+inpath=$HOME/data/SRP107308/hicexplorer/hicconvertformat/${matformat}
+outpath=$HOME/ThesisProject/results/hic/SRP107308/plotDistsVsCounts
+
+# Input output Files
+output=${outpath}/${exp}_${resolution}_distsVsCounts.${outformat}
+ext=_${resolution}_${norm}.${matformat}
+
+mat1=${inpath}/${samp1}${ext}
+mat2=${inpath}/${samp2}${ext}
+mat3=${inpath}/${samp3}${ext}
+mat4=${inpath}/${samp4}${ext}
+
+# creates outpath if it doesn't exist
+mkdir -p ${outpath}
+
+hicPlotDistVsCounts -m ${mat1} ${mat2} ${mat3} ${mat4} \
+--labels ${samp1} ${samp2} ${samp3} ${samp4} \
+ -o ${output} \
+--plotsize 5 4.2 

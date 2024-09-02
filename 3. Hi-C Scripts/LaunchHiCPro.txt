@@ -1,0 +1,7 @@
+# Example code to run hic-pro
+# Run command is entered from the command line and HiC-Pro automatically generates qsub script for PBS batch submission
+# Input data directory must be one level above the directory containing the paired reads e.g.
+# If fastq files are located in data/fastq/sample/sample_R1.fastq sample_R2.fastq then input dir is: data/fastq
+# Also, sample directory must have identical name to fastq file prefix e.g. if files are named 123_R1.fastq and 123_R2.fastq the parent directory must be named 123
+
+$HOME/bin/HiC-Pro_3.1.0/bin/HiC-Pro -i $HOME/data/SRP107308/hicpro/2024-05-21/hic_results/data -o $HOME/data/SRP107308/hicpro/2024-05-21/matrix_upper -c $HOME/ThesisProject/config/hic-pro-config.txt -s build_contact_maps -s ice_norm -p

@@ -1,0 +1,112 @@
+---
+title: "fithicTobedpe"
+author: "James Spurrier"
+date: "`r Sys.Date()`"
+output: html_document
+editor:
+  mode: source 
+---
+
+```{r}
+library(tidyverse)
+library(DESeq2)
+library(genomation)
+library(GenomicInteractions)
+library(GenomicRanges)
+library(GenomicAlignments)
+library(GenomicFeatures)
+library(InteractionSet)
+library(IRanges)
+library(rtracklayer)
+library(plyranges)
+library(plyinteractions)
+library(AnnotationDbi)
+library(AnnotationHub)
+library(readr)
+library(data.table)
+```
+
+```{r}
+#cell_line <- paste0("786-O")
+cell_line <- paste0("786-M1A")
+#cell_line <- paste0("OS-RC2")
+#cell_line <- paste0("OS-LM1")
+res <- paste0("20000")
+hicpath <- file.path("/media/james/META70006/ThesisProject/data/SRP107308/fithic2/fithic2", res, "intraOnly")
+```
+
+```{r}
+# Read in fithic data
+fithic_name <- paste0(cell_line, "_merge_", res, "_25000_2500000_intraOnly.spline_pass1.res20000.significances.txt")
+fithic_in <- read_table(file=file.path(hicpath, fithic_name), col_names = TRUE)
+
+# convert to genomic interactions
+hic <- fithic_in %>% rename(seqnames1 = chr1, seqnames2 = chr2) %>% 
+  mutate(start1 = fragmentMid1 - 10000, end1 = fragmentMid1 + 10000,
+         start2 = fragmentMid2 - 10000, end2 = fragmentMid2 + 10000) %>% 
+  dplyr::select(seqnames1, start1, end1, seqnames2, start2, end2, contactCount, `p-value`, 
+                `q-value`, bias1, bias2, ExpCC) %>% # filter for significant interactions only
+  dplyr::filter(`q-value` <= 0.05)
+
+# Save filtered FitHic as RData
+fithic_name <- paste0(cell_line, "_merge_", res, "_25000_2500000_intraOnly.spline_pass1.res20000.FDR05.RData")
+save(hic, file = file.path(hicpath, fithic_name))
+
+# Convert hic dataframe to BEDPE format and add name and score columns
+bedpe_df <- hic %>%
+  dplyr::mutate(
+    chrom1 = seqnames1,
+    start1 = as.integer(start1),
+    end1 = as.integer(end1),
+    chrom2 = seqnames2,
+    start2 = as.integer(start2),
+    end2 = as.integer(end2),
+    name = paste0("fithicFDR05_", row_number()),        # Create a unique name for each interaction
+    score = contactCount       # Duplicate the contactcount column
+  ) %>%
+  dplyr::select(chrom1, start1, end1, chrom2, start2, end2, name, score) %>%
+  dplyr::arrange(chrom1, start1, chrom2, start2)
+
+# Specify the output file name
+output_file <- paste0(cell_line, "_merge_", res, "_25000_2500000_intraOnly.spline_pass1.res20000.FDR05.bedpe")
+
+# Write the dataframe to a BEDPE file
+write.table(bedpe_df, file = file.path(hicpath, output_file), quote = FALSE, sep = "\t", row.names = FALSE, col.names = FALSE)
+```
+
+
+```{r}
+# convert to genomic interactions
+hic <- fithic_in %>% rename(seqnames1 = chr1, seqnames2 = chr2) %>% 
+  mutate(start1 = fragmentMid1 - 10000, end1 = fragmentMid1 + 10000,
+         start2 = fragmentMid2 - 10000, end2 = fragmentMid2 + 10000) %>% 
+  dplyr::select(seqnames1, start1, end1, seqnames2, start2, end2, contactCount, `p-value`, 
+                `q-value`, bias1, bias2, ExpCC) %>% # filter for significant interactions only
+  dplyr::filter(`q-value` <= 0.01)
+
+# Save filtered FitHic as RData
+fithic_name <- paste0(cell_line, "_merge_", res, "_25000_2500000_intraOnly.spline_pass1.res20000.FDR01.RData")
+save(hic, file = file.path(hicpath, fithic_name))
+
+# Convert hic dataframe to BEDPE format and add name and score columns
+bedpe_df <- hic %>%
+  dplyr::mutate(
+    chrom1 = seqnames1,
+    start1 = as.integer(start1),
+    end1 = as.integer(end1),
+    chrom2 = seqnames2,
+    start2 = as.integer(start2),
+    end2 = as.integer(end2),
+    name = paste0("fithicFDR05_", row_number()),        # Create a unique name for each interaction
+    score = contactCount       # Duplicate the contactcount column
+  ) %>%
+  dplyr::select(chrom1, start1, end1, chrom2, start2, end2, name, score) %>%
+  dplyr::arrange(chrom1, start1, chrom2, start2)
+
+# Specify the output file name
+output_file <- paste0(cell_line, "_merge_", res, "_25000_2500000_intraOnly.spline_pass1.res20000.FDR01.bedpe")
+
+# Write the dataframe to a BEDPE file
+write.table(bedpe_df, file = file.path(hicpath, output_file), quote = FALSE, sep = "\t", row.names = FALSE, col.names = FALSE)
+```
+

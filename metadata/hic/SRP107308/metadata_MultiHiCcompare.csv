@@ -1,0 +1,9 @@
+Index,Run,SampleName,Cell_Line,Condition,Source_Name,SRA.Study
+2,SRR5574929,786-M1A-rep1,786-M1A,metastatic,786-M1A cell line,SRP107308
+4,SRR5574931,786-M1A-rep2,786-M1A,metastatic,786-M1A cell line,SRP107308
+6,SLX-11715.NoIndex.HCK2LBBXY.s_3,OS-LM1-rep2,OS-LM1,metastatic,,
+8,,,OS-LM1,metastatic,,
+1,SRR5574928,786-O-rep1,786-O,nonmetastatic,786-O cell line,SRP107308
+3,SRR5574930,786-O-rep2,786-O,nonmetastatic,786-O cell line,SRP107308
+5,SLX-10808.NoIndex.HCK2LBBXY.s-2,OS-RC2-rep2,OS-RC2,nonmetastatic,,
+7,,,OS-RC2,nonmetastatic,,

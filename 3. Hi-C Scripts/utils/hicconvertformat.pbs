@@ -1,0 +1,45 @@
+#!/usr/bin/bash
+
+#PBS -N hicconvertFormat20K
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=10:mem=100gb
+#PBS -J 1-6
+#Sets current directory to working
+cd ${PBS_O_WORKDIR}
+
+module load anaconda3/personal
+source activate hicexplorer
+
+# SETUP FOR PBS ARRAY
+# COMMENT OUT FOR SINGLE BATCH SUBMISSIONS
+#####################################################################################
+## Setup PBS array and assign file names stored in metadata using PBS_ARRAY_INDEX
+#####################################################################################
+metadata=$HOME/ThesisProject/metadata/hic/SRP107308/metadata_hicconvertformat.csv
+sampleID=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $2}' ${metadata})
+## samplename=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $3}' ${metadata})
+## cellline=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $4}' ${metadata})
+#####################################################################################
+samplename=${sampleID}_merge
+
+
+# HiC-Pro outputs subsampled matrices at various resolutions with and without ICED normalisation.
+# Specify which resolution/normalisation to convert
+resolution=20000
+norm=raw
+outformat=ginteractions
+# Create inpath and outpaths
+matpath=$HOME/data/SRP107308/hicpro/matrix/upper/${samplename}/${norm}/${resolution}
+bedpath=$HOME/data/SRP107308/hicpro/matrix/upper/${samplename}/${norm}/${resolution}
+outpath=$HOME/data/SRP107308/hicexplorer/hicconvertformat/${outformat}
+
+inmat=${matpath}/${samplename}_${resolution}.matrix
+inbed=${bedpath}/${samplename}_${resolution}_abs.bed
+output=${outpath}/${samplename}_${resolution}_${norm}.${outformat}
+
+# creates outpath if it doesn't exist
+mkdir -p ${outpath}
+
+hicConvertFormat -m ${inmat} \
+--bedFileHicpro ${inbed} \
+--inputFormat hicpro --outputFormat ${outformat} -o ${output}

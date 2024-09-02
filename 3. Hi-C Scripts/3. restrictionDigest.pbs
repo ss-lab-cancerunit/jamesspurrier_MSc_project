@@ -1,0 +1,19 @@
+#!/usr/bin/bash
+
+# specific to pbs
+#PBS -N HiCProHINDIIIDigest
+#PBS -l select=1:ncpus=4:mem=32gb
+#PBS -l walltime=24:00:00
+
+#Set work directory
+cd ${PBS_O_WORKDIR}
+
+module load anaconda3/personal
+source activate hic-pro
+
+programDir=$HOME/anaconda3/envs/HiC-Pro_3.1.0/bin/utils
+gRef=$HOME/data/reference_genome/hic-pro-indices/hg38/hg38_std_chr.fa
+outpath=$HOME/data/reference_genome/hic-pro-indices/hg38
+
+# Digest the HG38 genome by HindIII
+${programDir}/digest_genome.py -r hindiii -o ${outpath}/hg38_hindiii.bed ${gRef}

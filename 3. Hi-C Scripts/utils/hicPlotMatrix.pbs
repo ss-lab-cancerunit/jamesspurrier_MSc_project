@@ -1,0 +1,41 @@
+#!/usr/bin/bash
+
+#PBS -N hicplotmatrixM1A1Mb
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=8:mem=64gb
+
+#Sets current directory to working
+cd ${PBS_O_WORKDIR}
+
+# Ensure latest version of HiCExplorer in installed with: conda install hicexplorer=3.7.2 -c bioconda -c conda-forge
+
+module load anaconda3/personal
+source activate hicexplorer
+
+#####################################################################################
+# SETUP FOR PBS ARRAY
+# COMMENT OUT FOR SINGLE BATCH SUBMISSIONS
+#####################################################################################
+## NA
+
+#####################################################################################
+
+# Create inpath and outpaths
+inpath=$HOME/data/SRP107308/hicexplorer/hicconvertformat/h5
+outpath=$HOME/data/SRP107308/hicexplorer/figures
+
+# creates outpath if it doesn't exist
+mkdir -p ${outpath}
+
+# Input Files
+sampleID=786-M1A
+resolution=1000000
+ext=_merge_${resolution}_iced.h5
+
+# creates outpath if it doesn't exist
+mkdir -p ${outpath}
+ 
+hicPlotMatrix --matrix ${inpath}/${sampleID}${ext} \
+--outFileName ${outpath}/${sampleID}${ext}.pdf \
+## --chromosomeOrder chr2 \
+--title '786-M1A Iced All Chromosomes'

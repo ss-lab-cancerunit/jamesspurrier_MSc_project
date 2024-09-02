@@ -1,0 +1,65 @@
+#!/usr/bin/bash
+
+#PBS -N HicFindTADs786_RC2_ICED40K
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=8:mem=64gb
+
+#Sets current directory to working
+cd ${PBS_O_WORKDIR}
+
+# Ensure latest version of HiCExplorer in installed with: conda install hicexplorer=3.7.2 -c bioconda -c conda-forge
+
+module load anaconda3/personal
+source activate hicexplorer
+
+#####################################################################################
+# SETUP FOR PBS ARRAY
+# COMMENT OUT FOR SINGLE BATCH SUBMISSIONS
+#####################################################################################
+## NA
+
+#####################################################################################
+
+# Create inpath and outpaths
+inpath=$HOME/data/SRP107308/hicexplorer/hicconvertformat/h5
+outpath=$HOME/data/SRP107308/hicexplorer/hicfindtads
+
+# creates outpath if it doesn't exist
+mkdir -p ${outpath}
+
+# Input Files
+sampleID=786_RC2
+resolution=40000
+ext=_merge_${resolution}_iced.h5
+
+#####################################################################################
+# Run hicFindTADs with default parameters
+#####################################################################################
+ hicFindTADs -m ${inpath}/${sampleID}${ext} \
+ --outPrefix ${outpath}/${sampleID}_${resolution}_merge_iced_default_fdr \
+ --correctForMultipleTesting fdr \
+ --numberOfProcessors 8
+
+#####################################################################################
+# Run hicFindTADs with custom window settings
+#####################################################################################
+# Parameters for TAD calling
+## minDepth=120000
+## maxDepth=400000
+## step=40000
+
+## hicFindTADs -m ${inpath}/${sampleID}${ext} \
+## --outPrefix ${outpath}/${sampleID}_${resolution}_merge_iced_min${minDepth}_max${maxDepth}_step${step}_thres05_delta01_fdr \
+## --minDepth ${minDepth} \
+## --maxDepth ${maxDepth} \
+## --step ${step} \
+## --thresholdComparisons 0.05 \
+## --delta 0.01 \
+## --correctForMultipleTesting fdr \
+## --numberOfProcessors 16
+ 
+#####################################################################################
+## Ignore below unused lines used for forcing single threaded execution (they would go at top of script if used)
+# export MKL_NUM_THREADS=1
+# export NUMEXPR_NUM_THREADS=1
+# export OMP_NUM_THREADS=1

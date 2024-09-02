@@ -1,0 +1,85 @@
+#PBS -N macs3cmbreps
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=4:mem=16gb
+#PBS -J 7-8
+
+## This script combines chipseq replicates using macs3 v3.0.1 cmbreps function with Fishers exact test
+## Input files are input normalised ppois bedgraph p-value scores files produced by mas3callpeak.pbs script with
+## -B option. Output files are bedgraph scores. Peaks are then called on the output files using macs3 bdgpeakcall
+## Bedgraphs are converted to bigwig for visualisation using UCSC bedGraphToBigWig util
+## Also requires: https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/p14/hg38.p14.chrom.sizes 
+
+#####################################################################################
+## Sets work directory to current
+#####################################################################################
+cd ${PBS_O_WORKDIR}
+
+#####################################################################################
+## Load macs3
+#####################################################################################
+module purge
+module load anaconda3/personal
+source activate macs3
+
+#####################################################################################
+## SETUP FOR PBS ARRAY JOB 
+## Print row/column info stored in metadata.csv based on assigned PBS_ARRAY_INDEX
+#####################################################################################
+metadata=$HOME/ThesisProject/metadata/chipseq/SRP104404/metadata_macs3cmbreps.csv
+rep1ID=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $3}' ${metadata})
+rep2ID=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $4}' ${metadata})
+rep3ID=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $5}' ${metadata})
+rep4ID=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $6}' ${metadata})
+biosample=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $2}' ${metadata})
+chip1=${rep1ID}_ppois.bdg
+chip2=${rep2ID}_ppois.bdg
+chip3=${rep3ID}_ppois.bdg
+chip4=${rep4ID}_ppois.bdg
+
+#####################################################################################
+## Specify input and output directories
+#####################################################################################
+inpath=$EPHEMERAL/SRP104404/peaks/individual
+outpath=$EPHEMERAL/SRP104404/peaks/cmbreps
+output=${outpath}/${biosample}
+hg38sizes=$HOME/data/reference_genome/ucsc/hg38/hg38.analysisSet.chrom.sizes 
+
+#####################################################################################
+## creates outpath if it doesn't exist
+#####################################################################################
+mkdir -p ${outpath}
+
+#####################################################################################
+## Combine replicates using macs3 cmbreps with default settings
+#####################################################################################
+macs3 cmbreps -i ${inpath}/${chip1} ${inpath}/${chip2} ${inpath}/${chip3} ${inpath}/${chip4} \
+	--outdir ${outpath} \
+	-o ${biosample}_cmbreps.bdg \
+	-m fisher &&
+	
+#####################################################################################
+## Call peaks on combined scores files with macs3 bdgpeakcall
+## Scores are -log10p values. Cutoff -c set to 1.3 (p = 0.05) 
+## default min frag length -l 200bp
+## read length -g 50bp
+#####################################################################################
+macs3 bdgpeakcall -i ${output}_cmbreps.bdg \
+	-c 1.3 \
+	-l 200 \
+	-g 50 \
+	-o ${output}_cmbreps_peaks.narrowPeak
+
+#####################################################################################
+## Sort the combined scores bedgraph before converting to bigwig using
+## Remove last line with sed (contains text field that causes error)
+## UCSC bedGraphToBig utility (requires hg38.chrom.sizes)
+#####################################################################################
+LC_ALL=C sort -k1,1 -k2,2n ${output}_cmbreps.bdg > ${output}_cmbreps.sorted.bdg &&
+
+sed -i '$d' ${output}_cmbreps.sorted.bdg &&
+	
+bedGraphToBigWig ${output}_cmbreps.sorted.bdg \
+	${hg38sizes} \
+	${output}_cmbreps.bw
+	
+

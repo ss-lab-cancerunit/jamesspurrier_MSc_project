@@ -1,0 +1,42 @@
+#!/usr/bin/bash
+
+#PBS -N HicdifferentialTAD_786_RC2
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=8:mem=64gb
+
+#Sets current directory to working
+cd ${PBS_O_WORKDIR}
+
+# Ensure latest version of HiCExplorer in installed with: conda install hicexplorer=3.7.2 -c bioconda -c conda-forge
+
+module load anaconda3/personal
+source activate hicexplorer
+
+#####################################################################################
+# SETUP FOR PBS ARRAY
+# COMMENT OUT FOR SINGLE BATCH SUBMISSIONS
+#####################################################################################
+## NA
+
+#####################################################################################
+
+# Create inpath and outpaths
+matpath=$HOME/data/SRP107308/hicexplorer/hicconvertformat/h5
+tadpath=$HOME/data/SRP107308/hicexplorer/hicfindtads
+outpath=$HOME/data/SRP107308/hicexplorer/hicdifferentialtad
+
+# creates outpath if it doesn't exist
+mkdir -p ${outpath}
+
+# Input Files
+target=786_RC2
+control=M1A_LM1
+resolution=40000
+mat=_merge_${resolution}_iced.h5
+tads=_${resolution}_merge_iced_default_fdr_domains.bed
+
+hicDifferentialTAD --targetMatrix ${matpath}/${target}${mat} \
+                          --controlMatrix ${matpath}/${control}${mat} \
+                          --tadDomains ${tadpath}/${target}${tads} \
+                          --outFileNamePrefix ${outpath}/${target}_output_differential_tad \
+                          --threads 8

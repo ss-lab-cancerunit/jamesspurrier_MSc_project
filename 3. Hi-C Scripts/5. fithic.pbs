@@ -1,0 +1,83 @@
+#PBS -N fithic_40K_interChrom
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=4:mem=32gb
+#PBS -J 1-6
+
+## This script runs fithic2
+## Fithic assigns statistical significance to HiC contact interactions
+## https://github.com/ay-lab/fithic
+
+#####################################################################################
+## Sets work directory to current
+#####################################################################################
+cd ${PBS_O_WORKDIR}
+
+#####################################################################################
+## Load modules 
+## hicpro2fithic require python to be available on system path
+#####################################################################################
+module load anaconda3/personal
+source activate fithic
+
+#####################################################################################
+## SETUP FOR PBS ARRAY JOB 
+## Print row/column info stored in metadata.csv based on assigned PBS_ARRAY_INDEX
+#####################################################################################
+metadata=$HOME/ThesisProject/metadata/hic/SRP107308/metadata_fithic2.csv
+sampleID=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $2}' ${metadata})
+# samplename=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $3}' ${metadata})
+
+#####################################################################################
+## FitHiC config
+#####################################################################################
+res=40000
+upperbound=5000000
+lowerbound=50000
+regions=interOnly
+# regions=intraOnly
+suffix=${res}_${lowerbound}_${upperbound}_${regions}
+
+#####################################################################################
+## Specify input and output directories
+#####################################################################################
+samplename=${sampleID}_merge
+inpath=$HOME/data/SRP107308/hicpro/hicpro2fithic/${samplename}_${res}
+prefix=$HOME/data/SRP107308/fithic2/${res}
+outpath=$HOME/data/SRP107308/fithic2/${res}/${regions}
+
+#####################################################################################
+## creates outpath if it doesn't exist
+#####################################################################################
+mkdir -p ${prefix}
+mkdir -p ${outpath}
+
+#####################################################################################
+## input files
+#####################################################################################
+fragpath=${inpath}/${samplename}_${res}.fragmentMappability.gz
+intpath=${inpath}/${samplename}_${res}.interactionCounts.gz
+biases=${inpath}/${samplename}_${res}.biases_fixed.gz
+
+#####################################################################################
+## Run fithic2
+#####################################################################################
+fithic \
+-f ${fragpath} \
+-i ${intpath} \
+-o ${outpath} \
+-t ${biases} \
+-l ${samplename}_${suffix} \
+-r ${res} \
+-U ${upperbound} \
+-L ${lowerbound} \
+-x ${regions} &&
+
+#####################################################################################
+## Convert to UCSC format for visualisation in genome browser
+## Uses fithic util bundled with git repo
+#####################################################################################
+$HOME/bin/fithic/fithic/utils/visualize-UCSC.sh \
+${outpath}/${samplename}_${suffix}.spline_pass1.res${res}.significances.txt.gz \
+${outpath}/${samplename}_${suffix}.interact \
+0.05
+

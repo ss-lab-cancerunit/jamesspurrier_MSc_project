@@ -1,0 +1,309 @@
+---
+title: "MultiHicCompare"
+author: "James Spurrier"
+date: "`r Sys.Date()`"
+output: html_document
+editor:
+  mode: source
+---
+
+
+This script runs differential contact analysis of replicated hic experiments using the 
+bioconductor package multiHiCcompare v1.22.0
+https://www.bioconductor.org/packages/release/bioc/html/multiHiCcompare.html
+Input files are hicpro sparse upper triangular raw matrix and paired bed file
+
+```{r}
+library(tidyverse)
+library(readr) 
+library(data.table)
+library(edgeR)
+library(HiCcompare)
+library(multiHiCcompare)
+library(BiocParallel)
+library(AnnotationHub)
+```
+
+```{r}
+#############################################################################################
+## Configure biocparallel multicore parameters for processing on the cluster
+#############################################################################################
+numCores <- 2
+register(MulticoreParam(workers = numCores), default = TRUE)
+```
+
+```{r}
+#############################################################################################
+## Set input and output paths and directories
+#############################################################################################
+inpath <- file.path("data/SRP107308/hicpro/matrix/upper")
+tmpDir <- file.path("data/tmp")
+resultsDir <- file.path("results/hic/SRP107308/multihiccompare")
+figureDir <- file.path(resultsDir, "figures")
+deseqpath <- file.path("results/rnaseq/SRP104161/deseq2")
+dir.create(resultsDir)
+dir.create(figureDir)
+
+exp <- paste0("OS-RC2_vs_LM1")
+reso <- paste0("40000")
+# # 786-O-rep1
+# sampleID_1 <- paste0("SRR5574928")
+# # 786-O-rep2
+# sampleID_2 <- paste0("SRR5574930")
+# # 786-M1A-rep1
+# sampleID_3 <- paste0("SRR5574929")
+# # 786-M1A-rep2
+# sampleID_4 <- paste0("SRR5574931")
+
+# OS-RC2-rep1
+sampleID_1 <- paste0("OS-RC2-rep1")
+# OS-RC2-rep2
+sampleID_2 <- paste0("SLX-10808.NoIndex.HCK2LBBXY.s-2")
+# OS-LM1-rep1
+sampleID_3 <- paste0("OS-LM1-rep1")
+# OS-LM1-rep2
+sampleID_4 <- paste0("SLX-11715.NoIndex.HCK2LBBXY.s_3")
+```
+
+```{r}
+#############################################################################################
+## Import raw matrix and corresponding bed files from hicpro and convert to bedpe format
+## HiCcompare and MultiHiCcopmare provide the utility hicpro2bedpe for this purpose
+#############################################################################################
+# Sample 1 merged technical replicates
+bedname_1 <- paste0(sampleID_1, "/raw/", reso, "/", sampleID_1, "_", reso, "_abs.bed")
+matname_1 <- paste0(sampleID_1, "/raw/", reso, "/", sampleID_1, "_", reso, ".matrix")
+
+bed1 <- read.table(file = file.path(inpath, bedname_1))
+mat1 <- read.table(file = file.path(inpath, matname_1))
+bedpe_1 <- HiCcompare::hicpro2bedpe(mat1, bed1)
+# Take only intrachromosomal interactions (cis)
+bedpe_1 <- bedpe_1$cis
+bedpe_1 <- rbindlist(bedpe_1)
+# save to tmpDir
+file_name_1 <- paste0(sampleID_1, "_", reso, "_bedpe.Rdata")
+save(bedpe_1, file = file.path(tmpDir, file_name_1))
+
+# Sample 2 merged technical replicates
+bedname_2 <- paste0(sampleID_2, "/raw/", reso, "/", sampleID_2, "_", reso, "_abs.bed")
+matname_2 <- paste0(sampleID_2, "/raw/", reso, "/", sampleID_2, "_", reso, ".matrix")
+
+bed2 <- read.table(file = file.path(inpath, bedname_2))
+mat2 <- read.table(file = file.path(inpath, matname_2))
+bedpe_2 <- HiCcompare::hicpro2bedpe(mat2, bed2)
+# Take only intrachromosomal interactions (cis)
+bedpe_2 <- bedpe_2$cis
+bedpe_2 <- rbindlist(bedpe_2)
+# Save to tmpDir
+file_name_2 <- paste0(sampleID_2, "_", reso, "_bedpe.Rdata")
+save(bedpe_2, file = file.path(tmpDir, file_name_2))
+
+# Sample 3 merged technical replicates
+bedname_3 <- paste0(sampleID_3, "/raw/", reso, "/", sampleID_3, "_", reso, "_abs.bed")
+matname_3 <- paste0(sampleID_3, "/raw/", reso, "/", sampleID_3, "_", reso, ".matrix")
+
+bed3 <- read.table(file = file.path(inpath, bedname_3))
+mat3 <- read.table(file = file.path(inpath, matname_3))
+bedpe_3 <- HiCcompare::hicpro2bedpe(mat3, bed3)
+# Take only intrachromosomal interactions (cis)
+bedpe_3 <- bedpe_3$cis
+bedpe_3 <- rbindlist(bedpe_3)
+# save to tmpDir
+file_name_3 <- paste0(sampleID_3, "_", reso, "_bedpe.Rdata")
+save(bedpe_3, file = file.path(tmpDir, file_name_3))
+
+# Sample 1 merged technical replicates
+bedname_4 <- paste0(sampleID_4, "/raw/", reso, "/", sampleID_4, "_", reso, "_abs.bed")
+matname_4 <- paste0(sampleID_4, "/raw/", reso, "/", sampleID_4, "_", reso, ".matrix")
+
+bed4 <- read.table(file = file.path(inpath, bedname_4))
+mat4 <- read.table(file = file.path(inpath, matname_4))
+bedpe_4 <- HiCcompare::hicpro2bedpe(mat4, bed4)
+# Take only intrachromosomal interactions (cis)
+bedpe_4 <- bedpe_4$cis
+bedpe_4 <- rbindlist(bedpe_4)
+# save to tmpDir
+file_name_4 <- paste0(sampleID_4, "_", reso, "_bedpe.Rdata")
+save(bedpe_4, file = file.path(tmpDir, file_name_4))
+```
+
+```{r}
+file_name_1 <- paste0(sampleID_1, "_", reso, "_bedpe.Rdata")
+file_name_2 <- paste0(sampleID_2, "_", reso, "_bedpe.Rdata")
+file_name_3 <- paste0(sampleID_3, "_", reso, "_bedpe.Rdata")
+file_name_4 <- paste0(sampleID_4, "_", reso, "_bedpe.Rdata")
+
+load(file = file.path(tmpDir, file_name_1))
+load(file = file.path(tmpDir, file_name_2))
+load(file = file.path(tmpDir, file_name_3))
+load(file = file.path(tmpDir, file_name_4))
+```
+
+```{r}
+#############################################################################################
+## Build the hic 'experiment' object. This is a list of genomic interactions sets that also 
+## includes a design matrix for the experimental comparison
+#############################################################################################
+hicexp1 <- make_hicexp(bedpe_1, bedpe_2, bedpe_3, bedpe_4, 
+                       groups = c(0, 0, 1, 1), 
+                       zero.p = 0.8, A.min = 5, filter = TRUE,
+                       remove.regions = hg38_cyto)
+# save Rdata
+hicexp1_name <- paste0("multiHiCcompare_hicexp_", exp, "_", reso, ".RData")
+save(hicexp1, file = file.path(tmpDir, hicexp1_name))
+```
+
+```{r}
+# Load RData
+hicexp1_name <- paste0("multiHiCcompare_hicexp_", exp, "_", reso, ".RData")
+load(file = file.path(tmpDir, hicexp1_name))
+```
+
+
+```{r}
+#############################################################################################
+## Joint cyclic Loess normalisation
+## Before differential analysis, counts are normalised. This is performed jointly on all samples
+## across all conditions of comparison. 64gb ram appears to be sufficient. 
+## The vignette recommends the exact test be used for differentials without covariates (e.g batches)
+#############################################################################################
+# Joint normalisation using fast Loess
+hicexp1 <- fastlo(hicexp1, parallel = FALSE)
+# Differential analysis (exact_test)
+hicexp1 <- hic_exactTest(hicexp1, p.method = 'fdr', parallel = FALSE)
+# Save hicexperiment as rdata for downstream analysis
+hic.exp1.loess.RData <- paste0("multiHicCompare_results_", exp, "_", reso, "_Loess.RData")
+save(hicexp1, file = file.path(resultsDir, hic.exp1.loess.RData))
+
+multiHiCcompare::results(hicexp1)
+```
+
+```{r}
+hic.exp1.loess.RData <- paste0("multiHicCompare_results_", exp, "_", reso, "_Loess.RData")
+load(file = file.path(resultsDir, hic.exp1.loess.RData))
+```
+
+
+```{r}
+# Choose filtering criteria and extract significant results
+sigpairs <- topDirs(hicexp = hicexp1, logfc_cutoff = 0.58, logcpm_cutoff = 0.5, p.adj_cutoff = 0.1, return_df = 'pairedbed')
+# Save significant results (FDR 0.1)
+topDirs_rdata <- paste0("multihiccompare_results_FDR1_LFC05_", exp, "_", reso, ".RData")
+save(sigpairs, file = file.path(resultsDir, topDirs_rdata))
+topDirs_bedpe <- paste0("multihiccompare_results_FDR1_LFC05_", exp, "_", reso, ".bedpe")
+write.table(sigpairs, file = file.path(resultsDir, topDirs_bedpe), row.names = FALSE, col.names = TRUE)
+
+# Save summary counts for significantly interacting regions (regions detected as significant at least once)
+counts <- topDirs(hicexp1, logfc_cutoff = 0.58, logcpm_cutoff = 0.5, p.adj_cutoff = 0.1, return_df = 'bed', pval_aggregate = "fisher")
+
+counts_bed <- paste0("multihiccompare_results_counts_FDR1_LFC05_", exp, "_", reso, ".bed")
+write.table(counts, file = file.path(resultsDir, counts_bed), row.names = FALSE, col.names = TRUE)
+
+# Save results for juicebox visualisation (this gets saved to working directory!)
+export_juicebox_name <- paste0("multihiccompare_to_juicebox_FDR1_", exp, "_", reso, "_annotations.txt")
+export_juicebox_path <- file.path(resultsDir, export_juicebox_name)
+exportJuicebox(hicexp1, p.adj_cutoff = 0.1, file_name = export_juicebox_path)
+```
+
+## MD Plot
+
+```{r}
+file_name <- paste0("MDcomposite_chr2_", exp, "_", reso, ".pdf")
+pdf(file = file.path(figureDir, file_name))
+MD_composite(hicexp = hicexp1, plot.chr = 2, D.range = 0.05)
+dev.off()
+
+file_name <- paste0("MDcomposite_chr2_", exp, "_", reso, ".svg")
+svg(file = file.path(figureDir, file_name))
+MD_composite(hicexp = hicexp1, plot.chr = 2, D.range = 0.05)
+dev.off()
+
+
+file_name <- paste0("MDcomposite_chr4_", exp, "_", reso, ".pdf")
+pdf(file = file.path(figureDir, file_name))
+MD_composite(hicexp = hicexp1, plot.chr = 4, D.range = 0.05)
+dev.off()
+
+file_name <- paste0("MDcomposite_chr4_", exp, "_", reso, ".svg")
+svg(file = file.path(figureDir, file_name))
+MD_composite(hicexp = hicexp1, plot.chr = 4, D.range = 0.05)
+dev.off()
+
+
+file_name <- paste0("MDcomposite_chr5_", exp, "_", reso, ".pdf")
+pdf(file = file.path(figureDir, file_name))
+MD_composite(hicexp = hicexp1, plot.chr = 5, D.range = 0.05)
+dev.off()
+
+file_name <- paste0("MDcomposite_chr5_", exp, "_", reso, ".svg")
+svg(file = file.path(figureDir, file_name))
+MD_composite(hicexp = hicexp1, plot.chr = 5, D.range = 0.05)
+dev.off()
+
+```
+
+
+## Volcano plot
+
+```{r}
+# Create categorical column for up, down and .ns genes
+# Convert p.adj to numeric, handling non-numeric values
+ggplot_data <- sigpairs %>%
+  mutate(p.adj = as.numeric(p.adj))
+ggplot_data <- ggplot_data %>% 
+  mutate(gene_type = case_when(logFC >= 0.58 & p.adj <= 0.05 ~ "up",
+                               logFC <= -0.58 & p.adj <= 0.05 ~ "down",
+                               TRUE ~ "ns"))
+
+# Obtain gene counts
+gene_counts <- ggplot_data %>% dplyr::count(gene_type)
+
+up_count <- gene_counts %>% filter(gene_type == "up") %>% pull(n)
+down_count <- gene_counts %>% filter(gene_type == "down") %>% pull(n)
+ns_counts <- gene_counts %>% filter(gene_type == "ns") %>% pull(n)
+
+# Add color, size, and transparency elements
+cols <- c("up" = "red", "down" = "blue", "ns" = "grey") 
+sizes <- c("up" = 2, "down" = 2, "ns" = 1) 
+alphas <- c("up" = 1, "down" = 1, "ns" = 0.5)
+
+ggVolcano <- ggplot(data = ggplot_data,
+       aes(x = logFC,
+           y = -log10(p.adj))) + 
+  geom_point(aes(colour = gene_type), 
+             alpha = 0.4, 
+             shape = 19,
+             size = 1.5) + 
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dashed") + 
+  geom_vline(xintercept = c(-log2(1.5), log2(1.5)),
+             linetype = "dashed") +
+  scale_colour_manual(values = cols) + 
+  scale_x_continuous(breaks = c(seq(-10, 10, 2)),     
+                     limits = c(-8, 8)) +
+  scale_fill_manual(values = cols) +
+  scale_colour_manual(values = cols,
+                      labels = c(
+                       paste("Depleted (", down_count, ")", sep = ""),
+                       paste("FDR 0.1 (", ns_counts, ")", sep = ""),
+                       paste("Enriched (", up_count, ")", sep = ""))) +
+  scale_alpha_manual(values = alphas) + # Modify point transparency
+  labs(x = "log2(fold change)",
+       y = "-log10(adjusted P-value)",
+       colour = "Interaction frequency \nchange") +
+  theme_bw() + # Select theme with a white background  
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5)) +
+  ylim(0, 30)
+
+ggVolcano
+volcano.pdf <- paste0("ggVolcano_multihiccompare_", exp, "_", reso,".pdf")
+pdf(file = file.path(figureDir, volcano.pdf), width = 6, height = 4)
+print(ggVolcano)
+dev.off()
+
+volcano.svg <- paste0("ggVolcano_multihiccompare_", exp, "_", reso, ".svg")
+svg(file = file.path(figureDir, volcano.svg), width = 6, height = 4)
+print(ggVolcano)
+dev.off()
+```
+

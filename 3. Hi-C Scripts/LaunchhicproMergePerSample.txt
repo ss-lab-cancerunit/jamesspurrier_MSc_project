@@ -1,0 +1,26 @@
+DO NOT EXECUTE AS QSUB BATCH JOB
+
+This code runs HiC-Pro in stepwise mode to merge technical replicates.   
+
+Run HiC-Pro in stepwise mode from the merge_persample stage, then build contact maps and perform normalisation. Merges valid pairs files for technical replicates. Used to generate a matrix of pooled replicates.
+Ensure RM_DUP is set to 0 in the hic-pro-config.txt BEFORE merging replicates, otherwise contacts that appear in both will be marked as duplicates and removed!
+
+Entered the following lines directly into the terminal...
+
+$HOME/bin/HiC-Pro_3.1.0/bin/HiC-Pro -i $HOME/data/SRP107308/hicpro/2024-05-21/hic_results/data/validpairs -o $HOME/data/SRP107308/hicpro/merged_technical_replicates -c $HOME/ThesisProject/config/hic-pro-config.txt -s merge_persample -s build_contact_maps -s ice_norm -p
+
+Upon executing the above directly in the terminal the following was returned:
+
+'Run HiC-Pro 3.1.0 parallel mode
+The following command will merge the processed data and run the remaining steps per sample:
+qsub HiCPro_step2_SRP107308HicProRC2Rep2.sh'
+
+Edit the #PBS header in the .sh script generated in the specified output folder, otherwise the PBS cluster sheduler will complain. 
+
+#!/bin/bash
+#PBS -l select=1:ncpus=24:mem=120gb
+#PBS -l walltime=48:00:00
+#PBS -m ae
+#PBS -k eo
+#PBS -N HiCpro_s2_SRP107308HicProSampleMerge
+#PBS -V

@@ -1,0 +1,25 @@
+#!/usr/bin/bash
+
+#PBS -N IndexingHg38Reference
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=4:mem=32gb
+
+#Sets current directory to working
+cd ${PBS_O_WORKDIR}
+
+#Load HiC_Pro conda env
+module purge
+module load anaconda3/personal
+source activate hic-pro
+
+# Path to HG38 reference fasta
+gRef=$HOME/data/reference_genome/hic-pro/hg38/hg38_std_chr.fa
+
+# Output directory for indices
+outpath=$HOME/data/reference_genome/hic-pro/hg38
+
+#Run Bowtie2 with the following options
+bowtie2-build --threads 4 -f ${gRef} ${outpath}/hg38_std_chr_idx
+
+#deactivate conda env
+conda deactivate

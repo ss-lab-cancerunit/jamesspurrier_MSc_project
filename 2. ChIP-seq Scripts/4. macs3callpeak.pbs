@@ -1,0 +1,96 @@
+#PBS -N macs3callpeak
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=2:mem=10gb
+#PBS -J 1-13
+
+## This script calls input normalised narrowPeaks using macs3 v3.0.1
+## Effective genome size for GRCh38 was obtained from: https://deeptools.readthedocs.io/en/develop/content/feature/effectiveGenomeSize.html
+## bedGraphToBigWig requires: https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/p14/hg38.p14.chrom.sizes 
+
+#####################################################################################
+## Sets work directory to current
+#####################################################################################
+cd ${PBS_O_WORKDIR}
+
+#####################################################################################
+## Load macs3
+#####################################################################################
+module purge
+module load anaconda3/personal
+source activate macs3
+
+#####################################################################################
+## SETUP FOR PBS ARRAY JOB 
+## Print row/column info stored in metadata.csv based on assigned PBS_ARRAY_INDEX
+#####################################################################################
+metadata=$HOME/ThesisProject/metadata/chipseq/SRP104404/metadata_macs3callpeak.csv
+chipID=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $2}' ${metadata})
+inputID=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $4}' ${metadata})
+chipBam=${chipID}_blacklisted.bam
+inputBam=${inputID}_blacklisted.bam 
+
+#####################################################################################
+## Specify input and output directories
+#####################################################################################
+inpath=$EPHEMERAL/SRP104404/bamfiles
+outpath=$EPHEMERAL/SRP104404/peaks/individual
+output=${outpath}/${chipID}
+hg38sizes=$HOME/data/reference_genome/ucsc/hg38/ucsc/hg38.analysisSet.chrom.sizes
+
+#####################################################################################
+## creates outpath if it doesn't exist
+#####################################################################################
+mkdir -p ${outpath}
+
+#####################################################################################
+## Call narrowPeaks with macs3 (default), use macs3 model to estimate fragment lengths (default)
+## Retain duplicates for differential binding analysis
+## Output pile-up and local lambda (input background) bedgraph files (-B)
+## Capture stdout messages from macs with 2> .log
+#####################################################################################
+macs3 callpeak -t ${inpath}/${chipBam} \
+	-c ${inpath}/${inputBam} \
+	-f BAM \
+	-g 2913022398 \
+	--keep-dup all \
+	-B \
+	-n ${chipID} \
+	--outdir ${outpath} 2> ${output}.log &&
+	
+#####################################################################################
+## Generate input normalised -log10 pval bedgraph signal track with macs3 bdgcmp and 
+## convert to bigwig for visualisation. Use default settings
+#####################################################################################
+macs3 bdgcmp -t ${output}_treat_pileup.bdg \
+	-c ${output}_control_lambda.bdg \
+	-m ppois \
+	-o ${output}_ppois.bdg &&
+
+#####################################################################################
+## Sort the input normalised bedgraph before converting to bigwig using
+## UCSC bedGraphToBig utility (also requires hg38.chrom.sizes)
+#####################################################################################
+LC_ALL=C sort -k1,1 -k2,2n ${output}_ppois.bdg > ${output}_ppois.sorted.bdg &&
+	
+bedGraphToBigWig ${output}_ppois.sorted.bdg \
+	${hg38sizes} \
+	${output}_ppois.bw
+	
+#####################################################################################
+## Repeat the above but generate fold enrichment score track with macs3 bdgcmp and 
+## convert to bigwig for visualisation
+#####################################################################################
+macs3 bdgcmp -t ${output}_treat_pileup.bdg \
+	-c ${output}_control_lambda.bdg \
+	-m FE \
+	-o ${output}_FE.bdg &&
+
+#####################################################################################
+## Sort the input normalised bedgraph before converting to bigwig using
+## UCSC bedGraphToBig utility (also requires hg38.chrom.sizes)
+#####################################################################################
+LC_ALL=C sort -k1,1 -k2,2n ${output}_FE.bdg > ${output}_FE.sorted.bdg &&
+	
+bedGraphToBigWig ${output}_FE.sorted.bdg \
+	${hg38sizes} \
+	${output}_FE.bw	

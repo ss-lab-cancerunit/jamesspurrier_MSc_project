@@ -1,0 +1,814 @@
+---
+title: "Dimensionality Reduction"
+author: "James Spurrier"
+date: "`r Sys.Date()`"
+output: html_document
+editor:
+  mode: source
+---
+
+```{r}
+library(tidyverse)
+library(DESeq2)
+library(ComplexHeatmap)
+library(PCAtools)
+library(umap)
+library(RColorBrewer)
+library(circlize)
+```
+
+## Import raw counts files
+
+```{r}
+# SRA study IDs
+studyID_1 <- paste0("SRP104161")
+studyID_2 <- paste0("SRP241904")
+studyID_3 <- paste0("SRP406132")
+studyID_4 <- paste0("SRP482110")
+
+# Path to metadata with sample information
+metadataFileName <- paste0("metadata_pcaUmap.csv")
+metadataDir <- file.path("metadata/exdata")
+#metadataDir <- file.path("~/ThesisProject/metadata/exdata")
+metadata <- as.data.frame(read_csv(file = file.path(metadataDir, metadataFileName)))
+
+# File names for counts files
+countsFileName_1 <- paste0("featurecounts_", studyID_1, ".RData")
+countsFileName_2 <- paste0("featurecounts_", studyID_2, ".RData")
+countsFileName_3 <- paste0("featurecounts_", studyID_3, ".RData")
+countsFileName_4 <- paste0("featurecounts_", studyID_4, ".RData")
+
+# Directory to counts files
+countsDir <- file.path("/media/james/META70006/ThesisProject/data/exdata")
+#countsDir <- file.path("~/data/exdata")
+
+# This function loads Rdata objects that have identical environment names (i.e "featurecounts")
+loadRData <- function(fileName){
+#loads an RData file, and returns it
+    load(fileName)
+    get(ls()[ls() != "fileName"])
+}
+
+# Load rawcounts
+featurecounts_1 <- loadRData(file = file.path(countsDir, studyID_1, countsFileName_1))
+featurecounts_2 <- loadRData(file = file.path(countsDir, studyID_2, countsFileName_2))
+featurecounts_3 <- loadRData(file = file.path(countsDir, studyID_3, countsFileName_3))
+featurecounts_4 <- loadRData(file = file.path(countsDir, studyID_4, countsFileName_4))
+```
+
+```{r}
+# Set and create output directories
+resultsDir <- file.path("results/exdata/pcaUmap")
+#resultsDir <- file.path("~/ThesisProject/results/exdata/pcaUmap")
+dir.create(resultsDir)
+```
+
+## Combine individual count matrices to single file
+
+```{r}
+# Remove all suffix from gene id and column names
+counts1 <- as.data.frame(featurecounts_1$counts)
+rownames(counts1) <- gsub("[.].*","",rownames(counts1))
+colnames(counts1) <- gsub("[.].*","",colnames(counts1))
+counts1 <- rownames_to_column(counts1, var = "gene_id")
+
+counts2 <- as.data.frame(featurecounts_2$counts)
+rownames(counts2) <- gsub("[.].*","",rownames(counts2))
+colnames(counts2) <- gsub("[.].*","",colnames(counts2))
+counts2 <- rownames_to_column(counts2, var = "gene_id")
+
+counts3 <- as.data.frame(featurecounts_3$counts)
+rownames(counts3) <- gsub("[.].*","",rownames(counts3))
+colnames(counts3) <- gsub("[.].*","",colnames(counts3))
+counts3 <- rownames_to_column(counts3, var = "gene_id")
+
+counts4 <- as.data.frame(featurecounts_4$counts)
+rownames(counts4) <- gsub("[.].*","",rownames(counts4))
+colnames(counts4) <- gsub("[.].*","",colnames(counts4))
+counts4 <- rownames_to_column(counts4, var = "gene_id")
+
+# List all counts matrices
+counts <- list(SRP104161=counts1,
+               SRP241904=counts2,
+               SRP406132=counts3,
+               SRP482110=counts4)
+```
+
+```{r}
+# Reduce list to single matrix
+merged_counts <- Reduce(function(x, y) merge(x, y, by = "gene_id", all = TRUE), counts)
+merged_matrix <- as.matrix(column_to_rownames(merged_counts, var = "gene_id"))
+```
+
+```{r}
+# Match rownames in metadata with colnames in counts matrix
+metadata <- column_to_rownames(metadata, var = "Run")
+genomic_idx <- match(rownames(metadata), colnames(merged_matrix))
+matrix_ordered  <- merged_matrix[ , genomic_idx]
+all(rownames(metadata) == colnames(matrix_ordered))
+```
+
+```{r}
+# Filter counts by cpm
+cpms <- edgeR::cpm(matrix_ordered)
+keep <- rowSums(cpms >= 1 ) >= 2
+cpms <- cpms[keep,]
+```
+
+## Principal Component Analysis of cpms
+
+```{r}
+p <- pca(cpms, metadata = metadata, removeVar = 0.1)
+```
+
+```{r}
+# Screeplot
+scree.pdf <- paste0("Scree_cpm1_filtered.pdf")
+pdf(file = file.path(resultsDir, scree.pdf), width = 12, height = 8)
+print(screeplot(p, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+
+scree.svg <- paste0("Scree_cpm1_filtered.svg")
+pdf(file = file.path(resultsDir, scree.svg), width = 12, height = 8)
+print(screeplot(p, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+```
+
+```{r}
+# PCs to plot
+x <- paste0("PC1")
+y <- paste0("PC2")
+# PCA plot
+pcabiplot.pdf <- paste0("PCA_biplot_cpm1_filtered.pdf")
+pdf(file = file.path(resultsDir, pcabiplot.pdf), width = 12, height = 12)
+print(biplot(p, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot.svg <- paste0("PCA_biplot_cpm1_filtered.svg")
+svg(file = file.path(resultsDir, pcabiplot.svg), width = 12, height = 12)
+print(biplot(p, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+```
+
+```{r}
+pairsplot.pdf <- paste0("pairs_plot_PCA1-5_cpm1_filtered.pdf")
+pdf(file = file.path(resultsDir, pairsplot.pdf), width = 12, height = 12)
+print(pairsplot(p, colby = "Source", shape = "Study", components = 1:5))
+dev.off()
+
+pairsplot.svg <- paste0("pairs_plot_PCA1-5_cpm1_filtered.svg")
+pdf(file = file.path(resultsDir, pairsplot.svg), width = 12, height = 12)
+print(pairsplot(p, colby = "Source", shape = "Study", components = 1:5))
+dev.off()
+```
+
+```{r}
+rm(p)
+```
+
+## Principle component analysis of variance stabilising transformed data
+
+```{r}
+# Create deseq dataset
+coldata <- metadata
+dds <- DESeqDataSetFromMatrix(countData = matrix_ordered,
+                              colData = coldata,
+                              design = ~ Metastatic)
+# Set reference for comparison
+dds$Metastatic <- relevel(dds$Metastatic, ref = "No")
+
+# Prefilter low counts
+dds <- estimateSizeFactors(dds)
+keep <- rowSums( counts(dds, normalized=TRUE) >= 1 ) >= 2
+dds <- dds[keep,]
+
+# Run Deseq
+dds <- DESeq(dds)
+
+# Extract variance stabilising transformed count from assay field of dds object
+vsd <- assay(vst(dds))
+```
+
+```{r}
+p <- pca(vsd, metadata = colData(dds), removeVar = 0.1)
+```
+
+```{r}
+# Screeplot
+scree.pdf <- paste0("Scree_vst.pdf")
+pdf(file = file.path(resultsDir, scree.pdf), width = 12, height = 8)
+print(screeplot(p, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+
+scree.svg <- paste0("Scree_vst.svg")
+pdf(file = file.path(resultsDir, scree.svg), width = 12, height = 8)
+print(screeplot(p, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+```
+
+```{r}
+# PCA plot
+x <- paste0("PC1")
+y <- paste0("PC2")
+
+pcabiplot.pdf <- paste0("PCA_biplot_vst.pdf")
+pdf(file = file.path(resultsDir, pcabiplot.pdf), width = 10, height = 6)
+print(biplot(p, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot.svg <- paste0("PCA_biplot_vst.svg")
+svg(file = file.path(resultsDir, pcabiplot.svg), width = 10, height = 6)
+print(biplot(p, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+```
+
+```{r}
+pairsplot.pdf <- paste0("pairs_plot_PCA1-5_vst.pdf")
+pdf(file = file.path(resultsDir, pairsplot.pdf), width = 10, height = 10)
+print(pairsplot(p, colby = "Source", shape = "Study", components = 1:5))
+dev.off()
+
+pairsplot.svg <- paste0("pairs_plot_PCA1-5_vst.svg")
+pdf(file = file.path(resultsDir, pairsplot.svg), width = 10, height = 10)
+print(pairsplot(p, colby = "Source", shape = "Study", components = 1:5))
+dev.off()
+```
+
+## Normal tissue samples appear to be skewing the results, contributing a significant proporiton to overall variance. Try removing and rerunning analysis.
+
+```{r}
+# Subset metadata to remove normal tissue samples
+metadata2 <- metadata %>% dplyr::filter(!Source == "normal")
+# Subset counts matrix for samples to be assayed
+matrix_ordered2 <- matrix_ordered[,c(rownames(metadata2))]
+# Check counts matrix colnames match metadata rownames
+all(rownames(metadata2) == colnames(matrix_ordered2))
+```
+
+```{r}
+# Filter counts by cpm
+cpms2 <- edgeR::cpm(matrix_ordered2)
+keep2 <- rowSums(cpms2 >= 1 ) >= 2
+cpms2 <- cpms2[keep2,]
+```
+
+## Principal Component Analysis of cpms
+
+```{r}
+p2 <- pca(cpms2, metadata = metadata2, removeVar = 0.1)
+```
+
+```{r}
+# Screeplot
+scree2.pdf <- paste0("Scree_cpm1_filtered_minus_normal.pdf")
+pdf(file = file.path(resultsDir, scree2.pdf), width = 12, height = 8)
+print(screeplot(p2, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+
+scree2.svg <- paste0("Scree_cpm1_filtered_minus_normal.svg")
+pdf(file = file.path(resultsDir, scree2.svg), width = 12, height = 8)
+print(screeplot(p2, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+```
+
+```{r}
+# PCA plot
+pcabiplot2.pdf <- paste0("PCA_biplot_cpm1_filtered_minus_normal.pdf")
+pdf(file = file.path(resultsDir, pcabiplot2.pdf), width = 12, height = 12)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot2.svg <- paste0("PCA_biplot_cpm1_filtered_minus_normal.svg")
+svg(file = file.path(resultsDir, pcabiplot2.svg), width = 12, height = 12)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+```
+
+```{r}
+pairsplot2.pdf <- paste0("pairs_plot_PCA1-5_cpm1_filtered_minus_normal.pdf")
+pdf(file = file.path(resultsDir, pairsplot2.pdf), width = 12, height = 12)
+print(pairsplot(p2, colby = "Source", shape = "Study", components = 1:5))
+dev.off()
+
+pairsplot2.svg <- paste0("pairs_plot_PCA1-5_cpm1_filtered_minus_normal.svg")
+pdf(file = file.path(resultsDir, pairsplot2.svg), width = 12, height = 12)
+print(pairsplot(p2, colby = "Source", shape = "Study", components = 1:5))
+dev.off()
+```
+
+```{r}
+rm(p2)
+```
+
+## Principle component analysis of variance stabilising transformed data
+
+```{r}
+# Create deseq dataset
+coldata2 <- metadata2
+dds2 <- DESeqDataSetFromMatrix(countData = matrix_ordered2,
+                              colData = coldata2,
+                              design = ~ Metastatic)
+# Set reference for comparison
+dds2$Metastatic <- relevel(dds2$Metastatic, ref = "No")
+
+# Prefilter low counts
+dds2 <- estimateSizeFactors(dds2)
+keep2 <- rowSums( counts(dds2, normalized=TRUE) >= 1 ) >= 2
+dds2 <- dds2[keep2,]
+
+# Run Deseq
+dds2 <- DESeq(dds2)
+
+# Run variance stabilising transform
+vsd2 <- assay(vst(dds2))
+```
+
+```{r}
+p2 <- pca(vsd2, metadata = colData(dds2), removeVar = 0.1)
+```
+
+```{r}
+# Screeplot
+scree2.pdf <- paste0("Scree_vst_minus_normal.pdf")
+pdf(file = file.path(resultsDir, scree2.pdf), width = 12, height = 8)
+print(screeplot(p2, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+
+scree2.svg <- paste0("Scree_vst_minus_normal.svg")
+pdf(file = file.path(resultsDir, scree2.svg), width = 12, height = 8)
+print(screeplot(p2, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+```
+
+```{r}
+# PCA plot
+x <- paste0("PC1")
+y <- paste0("PC2")
+
+pcabiplot2.pdf <- paste0("PCA_biplot_vst_minus_normal_PC1_PC2.pdf")
+pdf(file = file.path(resultsDir, pcabiplot2.pdf), width = 10, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot2.svg <- paste0("PCA_biplot_vst_minus_normal_PC1_PC2.svg")
+svg(file = file.path(resultsDir, pcabiplot2.svg), width = 10, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+
+
+x <- paste0("PC2")
+y <- paste0("PC3")
+
+pcabiplot2.pdf <- paste0("PCA_biplot_vst_minus_normal_PC2_PC3.pdf")
+pdf(file = file.path(resultsDir, pcabiplot2.pdf), width = 10, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot2.svg <- paste0("PCA_biplot_vst_minus_normal_PC2_PC3.svg")
+svg(file = file.path(resultsDir, pcabiplot2.svg), width = 10, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+
+
+x <- paste0("PC3")
+y <- paste0("PC4")
+
+pcabiplot2.pdf <- paste0("PCA_biplot_vst_minus_normal_PC3_PC4.pdf")
+pdf(file = file.path(resultsDir, pcabiplot2.pdf), width = 10, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot2.svg <- paste0("PCA_biplot_vst_minus_normal_PC3_PC4.svg")
+svg(file = file.path(resultsDir, pcabiplot2.svg), width = 10, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+```
+
+```{r}
+pairsplot2.pdf <- paste0("pairs_plot_PCA1-5_vst_minus_normal.pdf")
+pdf(file = file.path(resultsDir, pairsplot2.pdf), width = 10, height = 10)
+print(pairsplot(p2, colby = "Source", shape = "Study", components = 1:5))
+dev.off()
+
+pairsplot2.svg <- paste0("pairs_plot_PCA1-5_vst_minus_normal.svg")
+pdf(file = file.path(resultsDir, pairsplot2.svg), width = 10, height = 10)
+print(pairsplot(p2, colby = "Source", shape = "Study", components = 1:5))
+dev.off()
+```
+
+## Cell line only PCA
+
+Rerun PCA using only 786 and OS cell lines (no primary tissue)
+
+```{r}
+# Subset metadata to remove normal tissue samples
+metadata3 <- metadata %>% dplyr::filter(source_type == "Cell line")
+# Subset counts matrix for samples to be assayed
+matrix_ordered3 <- matrix_ordered[,c(rownames(metadata3))]
+# Check counts matrix colnames match metadata rownames
+all(rownames(metadata3) == colnames(matrix_ordered3))
+```
+
+```{r}
+# Create deseq dataset
+coldata3 <- metadata3
+dds3 <- DESeqDataSetFromMatrix(countData = matrix_ordered3,
+                              colData = coldata3,
+                              design = ~ Metastatic)
+# Set reference for comparison
+dds3$Metastatic <- relevel(dds3$Metastatic, ref = "No")
+
+# Prefilter low counts
+dds3 <- estimateSizeFactors(dds3)
+keep3 <- rowSums( counts(dds3, normalized=TRUE) >= 1 ) >= 2
+dds3 <- dds3[keep3,]
+
+# Run Deseq
+dds3 <- DESeq(dds3)
+
+# Run variance stabilising transform
+vsd3 <- assay(vst(dds3))
+```
+
+```{r}
+p2 <- pca(vsd3, metadata = colData(dds3), removeVar = 0.1)
+```
+
+```{r}
+# Screeplot
+scree3.pdf <- paste0("Scree_vst_cell_line.pdf")
+pdf(file = file.path(resultsDir, scree3.pdf), width = 12, height = 8)
+print(screeplot(p2, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+
+scree3.svg <- paste0("Scree_vst_cell_line.svg")
+pdf(file = file.path(resultsDir, scree3.svg), width = 12, height = 8)
+print(screeplot(p2, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+```
+
+```{r}
+# PCA plot
+x <- paste0("PC1")
+y <- paste0("PC2")
+
+pcabiplot2.pdf <- paste0("PCA_biplot_vst_cell_line_PC1_PC2.pdf")
+pdf(file = file.path(resultsDir, pcabiplot2.pdf), width = 10, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot2.svg <- paste0("PCA_biplot_vst_cell_line_PC1_PC2.svg")
+svg(file = file.path(resultsDir, pcabiplot2.svg), width = 10, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+
+
+x <- paste0("PC2")
+y <- paste0("PC3")
+
+pcabiplot2.pdf <- paste0("PCA_biplot_vst_cell_line_PC2_PC3.pdf")
+pdf(file = file.path(resultsDir, pcabiplot2.pdf), width = 10, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot2.svg <- paste0("PCA_biplot_vst_cell_line_PC2_PC3.svg")
+svg(file = file.path(resultsDir, pcabiplot2.svg), width = 10, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+
+
+x <- paste0("PC3")
+y <- paste0("PC4")
+
+pcabiplot2.pdf <- paste0("PCA_biplot_vst_cell_line_PC3_PC4.pdf")
+pdf(file = file.path(resultsDir, pcabiplot2.pdf), width = 10, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot2.svg <- paste0("PCA_biplot_vst_cell_line_PC3_PC4.svg")
+svg(file = file.path(resultsDir, pcabiplot2.svg), width = 10, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "Study", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+```
+
+```{r}
+pairsplot2.pdf <- paste0("pairs_plot_PCA1-5_vst_cell_line.pdf")
+pdf(file = file.path(resultsDir, pairsplot2.pdf), width = 10, height = 10)
+print(pairsplot(p2, colby = "Source", shape = "Study", components = 1:5))
+dev.off()
+
+pairsplot2.svg <- paste0("pairs_plot_PCA1-5_vst_cell_line.svg")
+pdf(file = file.path(resultsDir, pairsplot2.svg), width = 10, height = 10)
+print(pairsplot(p2, colby = "Source", shape = "Study", components = 1:5))
+dev.off()
+```
+
+# Rodrigues et al cell lines only
+
+```{r}
+# Subset metadata to remove normal tissue samples
+metadata4 <- metadata %>% dplyr::filter(Study == "Rodrigues, P., et al (2018). Cancer discovery")
+# Subset counts matrix for samples to be assayed
+matrix_ordered4 <- matrix_ordered[,c(rownames(metadata4))]
+# Check counts matrix colnames match metadata rownames
+all(rownames(metadata4) == colnames(matrix_ordered4))
+```
+
+```{r}
+# Create deseq dataset
+coldata4 <- metadata4
+dds4 <- DESeqDataSetFromMatrix(countData = matrix_ordered4,
+                              colData = coldata4,
+                              design = ~ Metastatic)
+# Set reference for comparison
+dds4$Metastatic <- relevel(dds4$Metastatic, ref = "No")
+
+# Prefilter low counts
+dds4 <- estimateSizeFactors(dds4)
+keep4 <- rowSums( counts(dds4, normalized=TRUE) >= 1 ) >= 2
+dds4 <- dds4[keep4,]
+
+# Run Deseq
+dds4 <- DESeq(dds4)
+
+# Run variance stabilising transform
+vsd4 <- assay(vst(dds4))
+```
+
+```{r}
+p2 <- pca(vsd4, metadata = colData(dds4), removeVar = 0.1)
+```
+
+```{r}
+# Screeplot
+scree3.pdf <- paste0("Scree_vst_Rodrigues.pdf")
+pdf(file = file.path(resultsDir, scree3.pdf), width = 12, height = 8)
+print(screeplot(p2, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+
+scree3.svg <- paste0("Scree_vst_Rodrigues.svg")
+pdf(file = file.path(resultsDir, scree3.svg), width = 12, height = 8)
+print(screeplot(p2, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+```
+
+```{r}
+# PCA plot
+x <- paste0("PC1")
+y <- paste0("PC2")
+
+pcabiplot2.pdf <- paste0("PCA_biplot_vst_Rodrigues_PC1_PC2.pdf")
+pdf(file = file.path(resultsDir, pcabiplot2.pdf), width = 7, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot2.svg <- paste0("PCA_biplot_vst_Rodrigues_PC1_PC2.svg")
+svg(file = file.path(resultsDir, pcabiplot2.svg), width = 7, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+
+
+x <- paste0("PC2")
+y <- paste0("PC3")
+
+pcabiplot2.pdf <- paste0("PCA_biplot_vst_Rodrigues_PC2_PC3.pdf")
+pdf(file = file.path(resultsDir, pcabiplot2.pdf), width = 7, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot2.svg <- paste0("PCA_biplot_vst_Rodrigues_PC2_PC3.svg")
+svg(file = file.path(resultsDir, pcabiplot2.svg), width = 7, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+
+
+x <- paste0("PC3")
+y <- paste0("PC4")
+
+pcabiplot2.pdf <- paste0("PCA_biplot_vst_Rodrigues_PC3_PC4.pdf")
+pdf(file = file.path(resultsDir, pcabiplot2.pdf), width = 7, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot2.svg <- paste0("PCA_biplot_vst_Rodrigues_PC3_PC4.svg")
+svg(file = file.path(resultsDir, pcabiplot2.svg), width = 7, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+```
+
+```{r}
+pairsplot2.pdf <- paste0("pairs_plot_PCA1-5_vst_Rodrigues.pdf")
+pdf(file = file.path(resultsDir, pairsplot2.pdf), width = 10, height = 10)
+print(pairsplot(p2, colby = "Source", components = 1:5))
+dev.off()
+
+pairsplot2.svg <- paste0("pairs_plot_PCA1-5_vst_Rodrigues.svg")
+pdf(file = file.path(resultsDir, pairsplot2.svg), width = 10, height = 10)
+print(pairsplot(p2, colby = "Source", components = 1:5))
+dev.off()
+```
+
+
+# Rodrigues vs Liu stage 1,3,4
+
+```{r}
+# Subset metadata to remove normal tissue samples
+metadata4 <- metadata %>% dplyr::filter(Study == "Rodrigues, P., et al (2018). Cancer discovery" | Study == "Le, L. N., et al. (2024). Frontiers in oncology")
+metadata4 <- metadata4 %>% dplyr::filter(!Source == "normal", !tumor_stage == "2", ! tumor_stage == "3")
+# Subset counts matrix for samples to be assayed
+matrix_ordered4 <- matrix_ordered[,c(rownames(metadata4))]
+# Check counts matrix colnames match metadata rownames
+all(rownames(metadata4) == colnames(matrix_ordered4))
+```
+
+```{r}
+# Create deseq dataset
+coldata4 <- metadata4
+dds4 <- DESeqDataSetFromMatrix(countData = matrix_ordered4,
+                              colData = coldata4,
+                              design = ~ Metastatic)
+# Set reference for comparison
+dds4$Metastatic <- relevel(dds4$Metastatic, ref = "No")
+
+# Prefilter low counts
+dds4 <- estimateSizeFactors(dds4)
+keep4 <- rowSums( counts(dds4, normalized=TRUE) >= 1 ) >= 2
+dds4 <- dds4[keep4,]
+
+# Run Deseq
+dds4 <- DESeq(dds4)
+
+# Run variance stabilising transform
+vsd4 <- assay(vst(dds4))
+```
+
+```{r}
+p2 <- pca(vsd4, metadata = colData(dds4), removeVar = 0.1)
+```
+
+```{r}
+# Screeplot
+scree3.pdf <- paste0("Scree_vst_Rodrigues_vs_Liu.pdf")
+pdf(file = file.path(resultsDir, scree3.pdf), width = 12, height = 8)
+print(screeplot(p2, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+
+scree3.svg <- paste0("Scree_vst_Rodrigues_vs_Liu.svg")
+pdf(file = file.path(resultsDir, scree3.svg), width = 12, height = 8)
+print(screeplot(p2, axisLabSize = 18, titleLabSize = 22, components = 1:10))
+dev.off()
+```
+
+```{r}
+# PCA plot
+x <- paste0("PC1")
+y <- paste0("PC2")
+
+pcabiplot2.pdf <- paste0("PCA_biplot_vst_Rodrigues_vs_Liu_PC1_PC2.pdf")
+pdf(file = file.path(resultsDir, pcabiplot2.pdf), width = 7, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "source_type", hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot2.svg <- paste0("PCA_biplot_vst_Rodrigues_vs_Liu_PC1_PC2.svg")
+svg(file = file.path(resultsDir, pcabiplot2.svg), width = 7, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "source_type",hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+
+
+x <- paste0("PC2")
+y <- paste0("PC3")
+
+pcabiplot2.pdf <- paste0("PCA_biplot_vst_Rodrigues_vs_Liu_PC2_PC3.pdf")
+pdf(file = file.path(resultsDir, pcabiplot2.pdf), width = 7, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "source_type",hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot2.svg <- paste0("PCA_biplot_vst_Rodrigues_vs_Liu_PC2_PC3.svg")
+svg(file = file.path(resultsDir, pcabiplot2.svg), width = 7, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "source_type",hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+
+
+x <- paste0("PC3")
+y <- paste0("PC4")
+
+pcabiplot2.pdf <- paste0("PCA_biplot_vst_Rodrigues_vs_Liu_PC3_PC4.pdf")
+pdf(file = file.path(resultsDir, pcabiplot2.pdf), width = 7, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "source_type",hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+
+pcabiplot2.svg <- paste0("PCA_biplot_vst_Rodrigues_vs_Liu_PC3_PC4.svg")
+svg(file = file.path(resultsDir, pcabiplot2.svg), width = 7, height = 6)
+print(biplot(p2, x = x, y = y, colby = "Source", shape = "source_type",hline = 0, vline = 0,
+             legendPosition = 'right', 
+             xlab = paste0(x, ", ", round(p2$variance[x], digits = 2), "%"), 
+             ylab = paste0(y, ", ", round(p2$variance[y], digits = 2), "%"), lab = NULL))
+dev.off()
+```
+
+```{r}
+pairsplot2.pdf <- paste0("pairs_plot_PCA1-5_vst_Rodrigues_vs_Liu.pdf")
+pdf(file = file.path(resultsDir, pairsplot2.pdf), width = 10, height = 10)
+print(pairsplot(p2, colby = "Source", components = 1:5))
+dev.off()
+
+pairsplot2.svg <- paste0("pairs_plot_PCA1-5_vst_Rodrigues_vs_Liu.svg")
+pdf(file = file.path(resultsDir, pairsplot2.svg), width = 10, height = 10)
+print(pairsplot(p2, colby = "Source", components = 1:5))
+dev.off()
+```

@@ -1,0 +1,44 @@
+#!/usr/bin/bash
+
+#PBS -N deeptoolsplotCorrelation
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=4:mem=32gb
+#PBS -J 1-3
+#Sets current directory to working
+cd ${PBS_O_WORKDIR}
+
+module load anaconda3/personal
+source activate deeptools
+
+# SETUP FOR PBS ARRAY
+# COMMENT OUT FOR SINGLE BATCH SUBMISSIONS
+#####################################################################################
+## Setup PBS array and assign file names stored in metadata using PBS_ARRAY_INDEX
+#####################################################################################
+metadata=$HOME/ThesisProject/metadata/chipseq/SRP104404/metadata_multiBamSummary.csv
+exp=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $14}' ${metadata})
+#####################################################################################
+
+# File extensions
+outformat=pdf
+
+# Create inpath and outpaths
+inpath=$HOME/ThesisProject/results/chipseq/SRP104404/deeptools/multiBamSummary
+outpath=$HOME/ThesisProject/results/chipseq/SRP104404/deeptools/plotCorrelation
+
+#####################################################################################
+# input files
+#####################################################################################
+input=${inpath}/multiBamSummary_${exp}.npz
+output=${outpath}/plotCorrelation_${exp}.${outformat}
+
+# creates outpath if it doesn't exist
+mkdir -p ${outpath}
+
+plotCorrelation \
+    -in ${input} \
+    --corMethod spearman --skipZeros \
+    --plotTitle "Spearman Correlation of Read Counts" \
+    --whatToPlot heatmap --colorMap RdYlBu --plotNumbers \
+    -o ${output} \
+    --outFileCorMatrix ${output}_SpearmanCorr_readCounts.tab

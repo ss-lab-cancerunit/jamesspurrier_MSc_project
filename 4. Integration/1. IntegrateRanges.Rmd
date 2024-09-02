@@ -1,0 +1,499 @@
+---
+title: "Integration"
+author: "James Spurrier"
+date: "2024-06-25"
+output: html_document
+editor:
+  mode: source 
+---
+
+```{r}
+library(tidyverse)
+library(DESeq2)
+library(genomation)
+library(GenomicInteractions)
+library(GenomicRanges)
+library(GenomicAlignments)
+library(GenomicFeatures)
+library(InteractionSet)
+library(IRanges)
+library(rtracklayer)
+library(plyranges)
+library(plyinteractions)
+library(AnnotationDbi)
+library(AnnotationHub)
+library(readr)
+library(data.table)
+library(multiHiCcompare)
+```
+
+#=========================================================================================================
+This script intersects multiple differential omics datasets 
+Differentially expressed genes, differentially modified histone marks (H3K27ac and H3K4me1) and differential interacting chromatin regions #=========================================================================================================
+
+```{r}
+res <- paste0("40000")
+exp <- paste0("786-O_786-M1A_multiHiCcompareRes_", res)
+resultsDir <- file.path("results/integration", exp)
+figureDir <- file.path(resultsDir, "figures")
+#hicpath <- file.path("results/hic/SRP107308/hiccompare", res)
+hicpath <- file.path("results/hic/SRP107308/multihiccompare")
+diffbindpath <- file.path("results/chipseq/SRP104404/diffbind")
+deseqpath <- file.path("results/rnaseq/SRP104161/deseq2")
+macspeakpath <- file.path("/media/james/META70006/ThesisProject/data/SRP104404/peaks/cmbreps")
+tmpDir <- file.path("/media/james/META70006/ThesisProject/data/tmp")
+```
+
+```{r}
+dir.create(resultsDir)
+dir.create(figureDir)
+```
+
+#=====================================================================================================
+Convert gencode GRCh38 annotation gtf to granges #=====================================================================================================
+
+```{r}
+# Import Gencode GTF as txdb object then save as RData for later use
+txdb <- makeTxDbFromGFF(
+  file = file.path("/media/james/META70006/ThesisProject/data/reference_genome/gencode/GRCh38/gencode.v45.primary_assembly.annotation.gtf"),
+  format = "gtf", dataSource = "Gencode GRCh38")
+# Take only cannonical genes from annotation GTF
+gencode_genes <- GenomicFeatures::genes(txdb)
+
+# save(gencode_genes, file = file.path(tmpDir, "gencode.v45.primary_assembly.annotation.TxDb.RData"))
+# # Load gencode txdb data
+# load(file = file.path(tmpDir, "gencode.v45.primary_assembly.annotation.TxDb.RData"))
+# gencode_genes <- as_tibble(gencode_genes)
+
+
+# remove version extensions
+# rownames(gencode_genes) <- gsub("[.].*","", rownames(gencode_genes))
+gencode_genes$gene_id <- gsub("[.].*","", gencode_genes$gene_id)
+# Convert to granges
+gencode_genes <- makeGRangesFromDataFrame(gencode_genes, keep.extra.columns = TRUE)
+# Sort by seqlevels
+gencode_genes <- sortSeqlevels(gencode_genes)
+gencode_genes <- sort(gencode_genes)
+# Mutate ranges to include only plus/minus 2500 pb from TSS (get promoter windows)
+gencode_promoters <- promoters(gencode_genes, 2500 ,2500)
+```
+
+#=====================================================================================================
+# Load Input files 
+#=====================================================================================================
+Differential expression results data
+
+```{r}
+# Load Deseq2 results
+load(file = file.path(deseqpath, "DESeq2_results_FDR05_LFC58_786_vs_M1A.RData"))
+# Take only sig results and convert to tbl
+deseqRes <- as_tibble(res05_Lfc05, rownames = "gene_id")
+# Subset gencode promoters Granges for only DESeq2 results
+DEG_promoters <- gencode_promoters[gencode_promoters$gene_id %in% deseqRes$gene_id]
+mcols(DEG_promoters) <- setNames(mcols(DEG_promoters), "promoter_ID") 
+```
+
+Differential HiC contact data
+
+```{r}
+# MultiHiCcompare
+hic_file <- paste0("multiHicCompare_results_786O_vs_M1A_", res, "_Loess.RData")
+load(file = file.path(hicpath, hic_file))
+
+# significant results
+#hicexp1 <- hicexp_786
+sigpairs <- topDirs(hicexp = hicexp1, logfc_cutoff = 0.58, logcpm_cutoff = 0.5, p.adj_cutoff = 0.1, return_df = 'pairedbed')
+# Make genomic interactions from bedpe
+hiccompareRes <- sigpairs %>% dplyr::rename(seqnames1 = chr1, seqnames2 = chr2)
+                                                
+# Prepare hic differentials for integration
+hiccompareRes <- hiccompareRes %>% # add unique ID to all interactions
+  mutate(interactionID = paste0("multiHiCcompare_res_20K_FDR05_786_vs_M1A", "_", row_number()))
+# Convert to ginteractions
+hic <- as_ginteractions(hiccompareRes, keep.extra.columns = TRUE)
+```
+
+
+```{r}
+# Split anchors into a1 and a2. TAKE UNIQUE ID metadata col!
+anchor1 <- anchors(hic, type = "first")
+mcols(anchor1)$interactionID <- hic$interactionID
+anchor1
+anchor2 <- anchors(hic, type = "second")
+mcols(anchor2)$interactionID <- hic$interactionID
+anchor2
+```
+
+Macs3 peak data
+
+```{r}
+# Function to cleanup some incorrect metadata strings in the .narrowPeak files names column
+modify_string <- function(x) {
+  x <- str_replace(x, ".*/", "")  # Remove up to and including the last forward slash
+  x <- str_replace_all(x, "_narrowpeak\\.bed_", ".narrowPeak_")  # Replace specific substring
+  return(x)
+}
+```
+
+```{r}
+# Load macs3 peak data
+macs3_peaks_H3K27ac <- read_narrowpeaks(file = file.path(macspeakpath, "M1A-H3K27ac_cmbreps_peaks.narrowPeak"))
+macs3_peaks_H3K27ac$name <- modify_string(macs3_peaks_H3K27ac$name)
+# Prune mcols
+macs3_peaks_H3K27ac <- as_tibble(macs3_peaks_H3K27ac) %>% 
+  dplyr::select(seqnames, start, end, width, strand, name) %>% # select base Granges cols
+  rename(macs_H3K27ac_ID = name) %>% # rename mcol$name to subject_name
+  as_granges()
+ # Load macs3 peak data 
+macs3_peaks_H3K4me1 <- read_narrowpeaks(file = file.path(macspeakpath, "M1A-H3K4me1_cmbreps_peaks.narrowPeak"))
+macs3_peaks_H3K4me1$name <- modify_string(macs3_peaks_H3K4me1$name)
+# Prune mcols
+macs3_peaks_H3K4me1 <- as_tibble(macs3_peaks_H3K4me1) %>% 
+  dplyr::select(seqnames, start, end, width, strand, name) %>% # select base Granges cols
+  rename(macs_H3K4me1_ID = name) %>% # rename mcol$name to subject_name
+  as_granges()
+# Load macs3 peak data
+macs3_peaks_p300 <- read_narrowpeaks(file = file.path("/media/james/META70006/ThesisProject/data/SRP104404/peaks/individual/M1A_p300_1_peaks.narrowPeak"))
+macs3_peaks_p300 <- as_tibble(macs3_peaks_p300) %>% 
+  dplyr::select(seqnames, start, end, width, strand, name) %>% # select base Granges cols
+  rename(macs_p300_ID = name) %>% # rename mcol$name to subject_name
+  as_granges()
+```
+
+Diffbind Peak differentials
+
+```{r}
+# Function for preparing diffbind peakfiles for integration
+generate_IDs <- function(file_path) {
+  # Extract file name without extension
+  file_name <- tools::file_path_sans_ext(basename(file_path))
+  # Read in the file as GRanges format
+  IDs <- readr::read_tsv(file_path) %>% as_granges()
+  # generate peak IDs
+  result <- as_tibble(IDs) %>% 
+  dplyr::select(seqnames, start, end, width, strand) %>% # select base Granges cols
+  mutate(subjectID = paste0(file_name, "_", row_number())) %>% # Generate unique ID for each peak and store in mcol
+  as_granges()
+  return(result)
+}
+```
+
+```{r}
+# Read in diffbind peaks
+file_path <- file.path(diffbindpath, "diffbind_resultsFDR05_786vsM1A_H3K27ac.granges")
+# Prepare for integration by generating unique ID for each diffbind peak then reorder by chr number
+dbPeaks_786vsM1A_H3K27ac <- generate_IDs(file_path) # generate unique ID for each diffbind peak
+dbPeaks_786vsM1A_H3K27ac <- sortSeqlevels(dbPeaks_786vsM1A_H3K27ac) # Sort sequence levels by chr order
+dbPeaks_786vsM1A_H3K27ac <- sort(dbPeaks_786vsM1A_H3K27ac)
+dbPeaks_786vsM1A_H3K27ac <- as_tibble(dbPeaks_786vsM1A_H3K27ac) %>% rename(diffbind_H3K27ac_ID = subjectID) %>% as_granges() # rename mcol to match histone mark type
+
+# Read in diffbind peaks
+file_path <- file.path(diffbindpath, "diffbind_resultsFDR05_786vsM1A_H3K4me1.granges")
+# Prepare for integration by generating unique ID for each diffbind peak then reorder by chr number
+dbPeaks_786vsM1A_H3K4me1 <- generate_IDs(file_path)
+dbPeaks_786vsM1A_H3K4me1 <- sortSeqlevels(dbPeaks_786vsM1A_H3K4me1)
+dbPeaks_786vsM1A_H3K4me1 <- sort(dbPeaks_786vsM1A_H3K4me1)
+dbPeaks_786vsM1A_H3K4me1 <- as_tibble(dbPeaks_786vsM1A_H3K4me1) %>% rename(diffbind_H3K4me1_ID = subjectID) %>% as_granges()
+```
+
+#===================================================================================================== 
+Integrate ranges
+Integration strategy: Give each hic interaction a unique ID. Split HiC interaction pairs into separate anchors. Using Genomic ranges findoverlapPairs, iterate over all annotation files (differentially expressed gene promoters, chipseq peaks and diffbind peaks) to find any sequences of interest that overlap each anchor individually. Then rejoin the separate anchors by full_joining by the unique interaction ID. #=====================================================================================================
+
+```{r}
+# Findoverlaps takes as arguments a query and a subject. The anchors are the queries and the annotation files (DEG_promoter sequences, chipseq peaks, diffbind peaks) the subjects.
+gr1 <- anchor1 
+subjects <- GRangesList(promoter = DEG_promoters, 
+                        H3K27ac = macs3_peaks_H3K27ac,
+                        H3K4me1 = macs3_peaks_H3K4me1,
+                        p300 = macs3_peaks_p300,
+                        diffbind_H3K27ac = dbPeaks_786vsM1A_H3K27ac,
+                        diffbind_H3K4me1 = dbPeaks_786vsM1A_H3K4me1)
+# Stack all annotation files of interest into a single granges
+gr2 <- stack(subjects, "subject_type")
+# Find overlapping regions
+ranges <- subsetByOverlaps(gr1, gr2, ignore.strand = TRUE)
+hits <- findOverlaps(gr1, gr2)
+# Use the hits indices to pull out the metadata for the overlapping features (IDs). CharacterList creates a list of annotated features corresponding to each interaction. Where multiple hits of the same feature type are annotated to a single anchor, the features are comma separated.
+# Use the hits indices to pull out the unique interaction IDs from metadata cols for each overlapping feature
+subjectType <- CharacterList(split(gr2$subject_type[subjectHits(hits)], queryHits(hits)))
+promoterID <- CharacterList(split(gr2$promoter_ID[subjectHits(hits)], queryHits(hits)))
+macs_H3K27ac_ID <- CharacterList(split(gr2$macs_H3K27ac_ID[subjectHits(hits)], queryHits(hits)))
+macs_H3K4me1_ID <- CharacterList(split(gr2$macs_H3K4me1_ID[subjectHits(hits)], queryHits(hits)))
+macs_p300_ID <- CharacterList(split(gr2$macs_p300_ID[subjectHits(hits)], queryHits(hits)))
+diffbind_H3K27ac_ID  <- CharacterList(split(gr2$diffbind_H3K27ac_ID[subjectHits(hits)], queryHits(hits)))
+diffbind_H3K4me1_ID  <- CharacterList(split(gr2$diffbind_H3K4me1_ID[subjectHits(hits)], queryHits(hits)))
+# Add all the overlapping features metadata back to the anchor ranges 
+mcols(ranges) <- DataFrame(mcols(ranges), subjectType, promoterID, macs_H3K27ac_ID, macs_H3K4me1_ID, macs_p300_ID, diffbind_H3K27ac_ID, diffbind_H3K4me1_ID)
+# Save to a new object
+anchor1_annotated <- ranges
+# Remove the intermediate r objects from environment
+rm(gr1, gr2, subjects, ranges, hits, subjectType, promoterID, macs_H3K27ac_ID, macs_H3K4me1_ID, macs_p300_ID, diffbind_H3K27ac_ID, diffbind_H3K4me1_ID)
+
+# Findoverlaps takes as arguments a query and a subject. The anchors are the queries and the annotation files the subjects.
+gr1 <- anchor2 
+subjects <- GRangesList(promoter = DEG_promoters, 
+                        H3K27ac = macs3_peaks_H3K27ac,
+                        H3K4me1 = macs3_peaks_H3K4me1,
+                        p300 = macs3_peaks_p300,
+                        diffbind_H3K27ac = dbPeaks_786vsM1A_H3K27ac,
+                        diffbind_H3K4me1 = dbPeaks_786vsM1A_H3K4me1)
+# Stack all annotation files of interest into a single granges
+gr2 <- stack(subjects, "subject_type")
+# Find overlapping regions
+ranges <- subsetByOverlaps(gr1, gr2, ignore.strand = TRUE)
+hits <- findOverlaps(gr1, gr2)
+# Use the hits indices to pull out the unique interaction IDs from metadata cols for each overlapping feature
+subjectType <- CharacterList(split(gr2$subject_type[subjectHits(hits)], queryHits(hits)))
+promoterID <- CharacterList(split(gr2$promoter_ID[subjectHits(hits)], queryHits(hits)))
+macs_H3K27ac_ID <- CharacterList(split(gr2$macs_H3K27ac_ID[subjectHits(hits)], queryHits(hits)))
+macs_H3K4me1_ID <- CharacterList(split(gr2$macs_H3K4me1_ID[subjectHits(hits)], queryHits(hits)))
+macs_p300_ID <- CharacterList(split(gr2$macs_p300_ID[subjectHits(hits)], queryHits(hits)))
+diffbind_H3K27ac_ID  <- CharacterList(split(gr2$diffbind_H3K27ac_ID[subjectHits(hits)], queryHits(hits)))
+diffbind_H3K4me1_ID  <- CharacterList(split(gr2$diffbind_H3K4me1_ID[subjectHits(hits)], queryHits(hits)))
+# Add all the overlapping features metadata back to the anchor ranges
+mcols(ranges) <- DataFrame(mcols(ranges), subjectType, promoterID, macs_H3K27ac_ID, macs_H3K4me1_ID, macs_p300_ID, diffbind_H3K27ac_ID, diffbind_H3K4me1_ID)
+# save to a new R object
+anchor2_annotated <- ranges
+# Remove the intermediate r objects from environment
+rm(gr1, gr2, subjects, ranges, hits, subjectType, promoterID, macs_H3K27ac_ID, macs_H3K4me1_ID, macs_p300_ID, diffbind_H3K27ac_ID, diffbind_H3K4me1_ID)
+```
+
+```{r}
+# Recombine original anchors with annotated results.
+# Convert integration results to tbl
+a1_anno <- as_tibble(anchor1_annotated)
+a2_anno <- as_tibble(anchor2_annotated)
+# Convert the original hic differential results anchors to tbl
+a1 <- as_tibble(anchor1)
+a2 <- as_tibble(anchor2)
+# Full join the original differential results with annotated anchors. Join by core ginteractions columns
+a1F <- full_join(a1, a1_anno, by = c("interactionID", "seqnames", "start", "end", "width", "strand"))
+# Rename the metadata columns to include the name of the overlapping anchor i.e A or B
+a1F <- a1F %>% rename(subjectType.A = subjectType, 
+                      promoterID.A = promoterID, 
+                      macs_H3K27ac_ID.A = macs_H3K27ac_ID, 
+                      macs_H3K4me1_ID.A = macs_H3K4me1_ID,
+                      macs_p300_ID.A = macs_p300_ID,
+                      diffbind_H3K27ac_ID.A = diffbind_H3K27ac_ID,
+                      diffbind_H3K4me1_ID.A = diffbind_H3K4me1_ID,
+                      seqnames1 = seqnames, start1 = start, end1 = end, width1 = width, strand1 = strand)
+# Full join the original differential results with annotated anchors. Join by core ginteractions columns
+a2F <- full_join(a2, a2_anno, by = c("interactionID", "seqnames", "start", "end", "width", "strand"))
+# Rename the metadata columns to include the name of the overlapping anchor i.e A or B
+a2F <- a2F %>% rename(subjectType.B = subjectType, 
+                      promoterID.B = promoterID, 
+                      macs_H3K27ac_ID.B = macs_H3K27ac_ID, 
+                      macs_H3K4me1_ID.B = macs_H3K4me1_ID,
+                      macs_p300_ID.B = macs_p300_ID,
+                      diffbind_H3K27ac_ID.B = diffbind_H3K27ac_ID,
+                      diffbind_H3K4me1_ID.B = diffbind_H3K4me1_ID,
+                      seqnames2 = seqnames, start2 = start, end2 = end, width2 = width, strand2 = strand)
+# Reconstitute differential interaction set from individual anchors
+integratedInteractions <- full_join(a1F, a2F, by = "interactionID") %>% relocate(c(seqnames2, start2, end2, width2, strand2), .after = "strand1") 
+```
+
+
+```{r}
+# Some of the dataframe cols contain list elements that cannot be written out to a tsv file
+# Function to parse all cols in a dataframe, check if list, and collapse to text string while removing NAs
+collapse_list_columns <- function(df, separator) {
+  # Apply the collapse function to each column if it is a list
+  df <- df %>%
+    mutate(across(where(is.list), ~ sapply(.x, function(x) {
+      if (all(is.na(x))) {
+        return(NA_character_)  # Return NA if all elements are NA
+      } else {
+        x <- x[!is.na(x)]  # Remove NA values
+        if (length(x) == 0) {
+          return(NA_character_)  # Return NA if no elements are left after removing NAs
+        } else {
+          return(paste(x, collapse = separator))  # Collapse remaining elements using the separator
+        }
+      }
+    }), .names = "collapsed_{col}")) %>%
+    select(-where(is.list)) %>%  # Remove original list columns
+    rename_with(~ sub("collapsed_", "", .), starts_with("collapsed_"))  # Rename collapsed columns to original names
+  
+  return(df)
+}
+```
+
+```{r}
+# Collapse column lists and separate strings with |
+int_res <- collapse_list_columns(integratedInteractions, " | ")
+```
+
+I want to know how many of each feature type is overlapping each anchor i.e count the number of hits for each feature type and save the counts data to new dataframe columns.
+
+```{r}
+count_feature_hits <- function(df, column, anchor, separator) {
+  # Get the list of unique features across all rows
+  unique_features <- df %>%
+    pull({{ column }}) %>%
+    strsplit(separator) %>%
+    unlist() %>%
+    unique() %>%
+    na.omit()
+  
+  # Create a column for each unique feature with its count
+  for (feature in unique_features) {
+    df <- df %>%
+      mutate(!!paste0(anchor, "_", feature) := sapply({{ column }}, function(x) {
+        if (is.na(x)) {
+          return(0)
+        } else {
+          return(sum(unlist(strsplit(x, separator)) == feature))
+        }
+      }))
+  }
+  
+  return(df)
+}
+```
+
+
+```{r}
+# Apply count_feature_hits function
+int_res <- count_feature_hits(int_res, subjectType.A, "A.hits", " | ")
+int_res <- count_feature_hits(int_res, subjectType.B, "B.hits", " | ")
+```
+
+```{r}
+# Clean up final results dataframe
+# The feature counting function I made also counts the field separator as a feature. Remove the cols containing these counts.
+int_res <- int_res %>% rename(hitsA = `A.hits_|`,
+                              hitsB = `B.hits_|`)
+
+int_res <- int_res %>% dplyr::select(!(hitsA))
+int_res <- int_res %>% dplyr::select(!(hitsB))
+```
+
+
+```{r}
+# Save results
+file_name <- paste0("integrated_results_allTestedInteractions_", exp, ".RData")
+save(int_res, file = file.path(resultsDir, file_name))
+```
+
+```{r}
+file_name <- paste0("integrated_results_allTestedInteractions_", exp,".tsv")
+write.table(int_res, file = file.path(resultsDir, file_name), sep = "\t", row.names = FALSE, col.names = TRUE)
+```
+
+#=========================================================================================================
+Subsetting integrated interaction results by features of interest
+#=========================================================================================================
+
+```{r}
+# This is just a dplyr::filter for different combinations of interaction types using the hits counts column values for each anchor and feature type combination
+# filter for hic interactions overlapping DEG promoters and macs3 peaks
+res_promoter_K27ac <- int_res %>% dplyr::filter(A.hits_promoter >= 1 & B.hits_promoter == 0 & B.hits_H3K27ac >= 1 | B.hits_promoter >= 1 & A.hits_promoter == 0 & A.hits_H3K27ac >= 1)
+
+res_promoter_K4me1 <- int_res %>% dplyr::filter(A.hits_promoter >= 1 & B.hits_promoter == 0 & B.hits_H3K4me1 >= 1 & B.hits_H3K27ac == 0 | B.hits_promoter >= 1 & A.hits_promoter == 0 & A.hits_H3K4me1 >= 1 & A.hits_H3K27ac == 0)
+
+res_promoter_K27ac_K4me1 <- int_res %>% dplyr::filter(A.hits_promoter >= 1 & B.hits_promoter == 0 & B.hits_H3K27ac >= 1 & B.hits_H3K4me1 >= 1 | B.hits_promoter >= 1 & A.hits_promoter == 0 & A.hits_H3K27ac >= 1 & A.hits_H3K4me1 >= 1)
+
+res_promoter_p300 <- int_res %>% dplyr::filter(A.hits_promoter >= 1 & B.hits_promoter == 0 & B.hits_p300 >= 1 | B.hits_promoter >= 1 & A.hits_promoter == 0 & A.hits_p300 >= 1)
+
+res_promoter_p300_K27ac_K4me1 <- int_res %>% dplyr::filter(A.hits_promoter >= 1 & B.hits_promoter == 0 & B.hits_p300 >= 1 & B.hits_H3K27ac >= 1 & B.hits_H3K4me1 >= 1 | B.hits_promoter >= 1 & A.hits_promoter == 0 & A.hits_p300 >= 1 & A.hits_H3K27ac >= 1 & A.hits_H3K4me1 >= 1)
+
+# Filter for hic interactions overlapping DEG promoters and diffbind peaks
+res_promoter_diffbind_K27ac <- int_res %>% dplyr::filter(A.hits_promoter >= 1 & B.hits_promoter == 0 & B.hits_diffbind_H3K27ac >= 1 | B.hits_promoter >= 1 & A.hits_promoter == 0 & A.hits_diffbind_H3K27ac >= 1)
+
+res_promoter_diffbind_K4me1 <- int_res %>% dplyr::filter(A.hits_promoter >= 1 & B.hits_promoter == 0 & B.hits_diffbind_H3K4me1 >= 1 | B.hits_promoter >= 1 & A.hits_promoter == 0 & A.hits_diffbind_H3K4me1 >= 1)
+
+res_promoter_diffbind_K27ac_K4me1 <- int_res %>% dplyr::filter(A.hits_promoter >= 1 & B.hits_promoter == 0 & B.hits_diffbind_H3K27ac >= 1 & B.hits_diffbind_H3K4me1 >= 1 | B.hits_promoter >= 1 & A.hits_promoter == 0 & A.hits_diffbind_H3K27ac >= 1 & A.hits_diffbind_H3K4me1 >= 1)
+
+# Filter for promoter - promoter interactions
+res_promoter_promoter <- int_res %>% dplyr::filter(A.hits_promoter >= 1 & B.hits_promoter >= 1)
+```
+
+Save subset results as RData
+
+```{r}
+# Put all the filtered results dataframes into a list and write them out to .RData and .tsv files
+res_by_feature_type <- list(promoter_H3K27ac = res_promoter_K27ac,
+                            promoter_H3K4me1 = res_promoter_K4me1,
+                            promoter_H3K27ac_H3K4me1 = res_promoter_K27ac_K4me1,
+                            promoter_p300 = res_promoter_p300,
+                            promoter_p300_K27ac_K4me1 = res_promoter_p300_K27ac_K4me1,
+                            promoter_diffbind_H3K27ac = res_promoter_diffbind_K27ac,
+                            promoter_diffbind_H3K4me1 = res_promoter_diffbind_K4me1,
+                            promoter_diffbind_H3K27ac_H3K4me1 = res_promoter_diffbind_K27ac_K4me1,
+                            promoter_promoter = res_promoter_promoter) 
+# Name of the file
+file_name <- paste0("integrated_results_by_feature_type_", exp, ".RData")
+save(res_by_feature_type, file = file.path(resultsDir, file_name))
+# Iterate over the list to write out .tsv files
+for (name in names(res_by_feature_type)) {
+  file_name <- paste0(name, "_interactions_", exp, ".tsv") # Take the name of the interaction type from names(list)
+  write.table(res_by_feature_type[[name]], file = file.path(resultsDir, file_name), sep = "\t", row.names = FALSE, col.names = TRUE)
+}
+```
+
+#=========================================================================================================
+Intersect DESeq2 results with integrated differential interaction results
+#=========================================================================================================
+
+Pull out the Ensembl gene IDs from the integration results dataframes (there are multiple integrated results dataframes, one for each interaction type of interest e.g. promoter to H3K27ac or promoter to p300).
+
+```{r}
+# Initialize a list to store ensembl IDs pulled from integration results dataframes
+ensgene_list <- list()
+
+# Loop over the list of dataframes
+for (name in names(res_by_feature_type)) {
+  df <- res_by_feature_type[[name]]
+  
+# Combine the columns promoterID.A and promoterID.B into one vector
+  combined_ids <- c(df$promoterID.A, df$promoterID.B)
+  
+  # Remove NA values
+  combined_ids <- na.omit(combined_ids)
+  
+  # Split the gene IDs by the pipe '|' symbol and unlist the resulting list
+  split_ids <- unlist(strsplit(combined_ids, "\\|"))
+  
+  # Remove duplicate gene IDs
+  unique_ids <- unique(split_ids)
+  
+  # Create a new dataframe with the unique gene IDs
+  gene_ids_df <- data.frame(geneID = unique_ids)
+  
+  # Name the new dataframe with the original dataframe's name prepended with 'geneID_'
+  new_df_name <- paste0("geneID_", name)
+  
+  # Store the new dataframe in the result list
+  ensgene_list[[new_df_name]] <- gene_ids_df
+}
+```
+
+Subset DESeq results for genes contained in each of the integrated results data frames.
+
+```{r}
+# Initialize a list to store the new DESeq2 subsets
+DESeq2_FDR05_subsets <- list()
+
+# Loop over the ensgene_list
+for (name in names(ensgene_list)) {
+  gene_ids <- ensgene_list[[name]]$geneID
+  
+  # Subset the DESeq2 results by the gene IDs in each element of ensgene_list
+  DESeq2_subset <- deseqRes[deseqRes$gene_id %in% gene_ids, ]
+  
+  # Name the new dataframe with the original result list's name prepended with 'DESeq2_'
+  new_df_name <- paste0("DESeq2_FDR05_LFC058_", name)
+  
+  # Store the new subset dataframe in the DESeq2_subsets list
+  DESeq2_FDR05_subsets[[new_df_name]] <- DESeq2_subset
+}
+```
+
+```{r}
+# Write out the deseq results data for genes identified as differentially interacting with each feature type
+for (name in names(DESeq2_FDR05_subsets)) {
+  file_name <- paste0(name, "_interaction_" , exp, ".tsv") # Take the name of the interaction type from names(list)
+  write.table(DESeq2_FDR05_subsets[[name]], file = file.path(resultsDir, file_name), sep = "\t", row.names = FALSE, col.names = TRUE)
+}
+```

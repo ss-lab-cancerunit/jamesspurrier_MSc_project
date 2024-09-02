@@ -1,0 +1,31 @@
+#!/bin/bash
+
+#PBS -N SRAfasterq-dump
+#PBS -l walltime=24:00:00
+#PBS -l select=1:ncpus=6:mem=32gb
+#PBS -J 1-8
+
+#Set virtual work directory to current
+cd ${PBS_O_WORKDIR}
+
+#Load sratools/3.1.0 module
+module purge
+module load sratoolkit/3.1.0
+
+# Assign file names to PBS cluster array job using metadata
+metadata=$HOME/ThesisProject/metadata/rnaseq/SRP104161/SRP104161_SampleSheet.csv
+SRR=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $2}' ${metadata})
+
+# Input and Output Directories
+prefix=$EPHEMERAL/SRP104161
+outpath=${prefix}/fastq
+tmpDir=$EPHEMERAL/tmp
+ncpus=6
+
+# Create outdir if not alread present
+mkdir -p ${prefix}
+mkdir -p ${outpath}
+mkdir -p ${tmpDir}
+
+#fasterq-dump needs output directory specified with -O /path-to-directory/
+fasterq-dump ${SRR} -t ${tmpDir} -O ${outpath} -e ${ncpus}

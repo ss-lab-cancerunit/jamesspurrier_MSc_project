@@ -1,0 +1,61 @@
+#PBS -N hicpro2juicer
+#PBS -l walltime=72:00:00
+#PBS -l select=1:ncpus=8:mem=96gb
+#PBS -J 1-6
+
+## This script converts HicPro v3.1.0 sparse upper matrix to .hic file format
+## Used for visualisation and annotation with Juicebox
+## Requires hg38.chrom.sizes: https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.chrom.sizes
+## Requires Juicer tools: https://s3.amazonaws.com/hicfiles.tc4ga.com/public/juicer/juicer_tools_1.22.01.jar
+
+#####################################################################################
+## Sets work directory to current
+#####################################################################################
+cd ${PBS_O_WORKDIR}
+
+#####################################################################################
+## Load modules
+#####################################################################################
+## NA
+
+#####################################################################################
+## SETUP FOR PBS ARRAY JOB 
+## Print row/column info stored in metadata.csv based on assigned PBS_ARRAY_INDEX
+#####################################################################################
+metadata=$HOME/ThesisProject/metadata/hic/SRP107308/metadata_hicpro2juicebox.csv
+sampleID=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $2}' ${metadata})
+## samplename=$(awk -F ',' -v taskID=${PBS_ARRAY_INDEX} '$1==taskID {print $3}' ${metadata})
+
+#####################################################################################
+## input files
+#####################################################################################
+samplename=${sampleID}_merge
+validPairs=${samplename}.allValidPairs
+hg38sizes=$HOME/data/reference_genome/ucsc/hg38/bt2/hg38.chrom.sizes 
+
+#####################################################################################
+## Specify input and output directories
+#####################################################################################
+inpath=$HOME/data/SRP107308/hicpro/data/${samplename}
+outpath=$HOME/data/SRP107308/hicpro/hicpro2juicer
+input=${inpath}/${validPairs}
+tmp=${EPHEMERAL}/tmp
+
+#####################################################################################
+## creates outpath if it doesn't exist
+#####################################################################################
+mkdir -p ${outpath}
+# cd ${outpath}
+
+#####################################################################################
+## Convert HiC-Pro output to Juicebox input using hicpro2juicebox utility and juicer tools
+#####################################################################################
+$HOME/bin/HiC-Pro_3.1.0/bin/utils/hicpro2juicebox.sh \
+-i ${input} \
+-g ${hg38sizes} \
+-j $HOME/bin/utils/juicer/juicer_tools_1.22.01.jar \
+-t ${tmp} \
+-o ${outpath} &&
+
+cp ${outpath}/${validPairs}.hic ${outpath}/${samplename}_addnorm.hic
+
