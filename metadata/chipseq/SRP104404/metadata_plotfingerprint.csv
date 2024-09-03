@@ -1,5 +1,0 @@
-array index,chip1,chip2,chip3,chip4,input1,input2,lab1,lab2,lab3,lab4,lab5,lab6,cell line
-1,M1A_K27_1,M1A_K27_2,M1A_K4me1_1,M1A_K4me1_2,M1A_input1,M1A_input2,H3K27ac-rep1,H3K27ac-rep2,H3K4me1-rep1,H3K4me1-rep2,Input-rep1,Input-rep2,786-M1A
-2,786_K27_1,786_K27_2,786_K4me1_1,786_K4me1_2,786_Input1,786_input2,H3K27ac-rep1,H3K27ac-rep2,H3K4me1-rep1,H3K4me1-rep2,Input-rep1,Input-rep2,786-O
-3,LM1_K27_1,LM1_K27_2,,,LM1_input1,,H3K27ac-rep1,H3K27ac-rep2,,,Input-rep1,,OS-LM1
-4,OS_K27_1,OS_K27_2,,,OS_input1,,H3K27ac-rep1,H3K27ac-rep2,,,Input-rep1,,OS-RC2

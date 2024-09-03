@@ -1,4 +1,0 @@
-array index,chip1,chip2,chip3,chip4,input1,input2,lab1,lab2,lab3,lab4,lab5,lab6,exp
-1,M1A_K27_1,M1A_K27_2,786_K27_1,786_K27_2,M1A_input1,786_Input1,786-M1A-rep1,786-M1A-rep2,786-O-rep1,786-O-rep2,786-M1A-input1,786-O-input1,786-H3K27ac
-2,LM1_K27_1,LM1_K27_2,OS_K27_1,OS_K27_2,LM1_input1,OS_input1,OS-LM1-rep1,OS-LM1-rep2,OS-RC2-rep1,OS-RC2-rep2,OS-LM1-input1,OS-RC2-input1,OS-H3K27ac
-3,M1A_K4me1_1,M1A_K4me1_2,786_K4me1_1,786_K4me1_2,M1A_input1,786_Input1,786-M1A-rep1,786-M1A-rep2,786-O-rep1,786-O-rep2,786-M1A-input1,786-O-input1,786-H3K4me1
