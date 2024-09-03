@@ -1,0 +1,688 @@
+---
+title: "Diffbind"
+author: "James Spurrier"
+date: "2024-06-23"
+output: html_document
+editor:
+  mode: source
+---
+
+```{r}
+library("tidyverse")
+library("DiffBind")
+library("profileplyr")
+library("readr")
+library("data.table")
+library("GenomicInteractions")
+library("BiocParallel")
+```
+
+############################################################################################# 
+
+## This script runs differential binding analysis of chipseq datasets using diffbind v3.12.0
+
+############################################################################################# 
+
+```{r}
+sample_sheet <- read.csv("metadata/chipseq/SRP104404/metadata_diffbind_local.csv")
+countsDir <- "data/SRP104404/diffbind"
+resultsDir <- file.path("results/chipseq/SRP104404/diffbind")
+figureDir <- file.path(resultsDir, "figures")
+```
+
+```{r}
+dir.create(resultsDir)
+dir.create(figureDir)
+```
+
+############################################################################################# 
+
+## Configure biocparallel multicore parameters for processing on the cluster
+
+############################################################################################# 
+
+```{r}
+numCores <- 4
+register(MulticoreParam(workers = numCores), default = TRUE)
+```
+
+############################################################################################# 
+
+## Prepare samplesheet
+
+############################################################################################# 
+
+```{r}
+# Filter metadata for 786 cell line H3K27ac files.
+samples_786_H3K27ac <- sample_sheet %>% filter(Factor == "H3K27ac", Par == "786")
+# Filter metadata for 786 cell line H3K4me1 files.
+samples_786_H3K4me1 <- sample_sheet %>% filter(Factor == "H3K4me1", Par == "786")
+# Filter metadata for 786 cell line H3K27ac files.
+samples_OS_H3K27ac <- sample_sheet %>% filter(Factor == "H3K27ac", Par == "OS")
+# Filter metadata for batched H3K27ac files.
+samples_batched_H3K27ac <- sample_sheet %>% filter(Factor == "H3K27ac")
+
+```
+
+############################################################################################# 
+
+Create DBA experiment objects from metadata \#############################################################################################
+
+```{r}
+dba_786_H3K27ac <- dba(sampleSheet = samples_786_H3K27ac,
+                   config=data.frame(RunParallel=TRUE,
+                                     cores=4,
+                                     doBlacklist=FALSE,
+                                     doGreylist=FALSE))
+
+dba_786_H3K4me1 <- dba(sampleSheet = samples_786_H3K4me1,
+                   config=data.frame(RunParallel=TRUE,
+                                     cores=4,
+                                     doBlacklist=FALSE,
+                                     doGreylist=FALSE))
+
+dba_OS_H3K27ac <- dba(sampleSheet = samples_OS_H3K27ac,
+                   config=data.frame(RunParallel=TRUE,
+                                     cores=4,
+                                     doBlacklist=FALSE,
+                                     doGreylist=FALSE))
+
+# dba_batch_H3K27ac <- dba(sampleSheet = samples_batched_H3K27ac,
+#                    config=data.frame(RunParallel=TRUE,
+#                                      cores=4,
+#                                      doBlacklist=FALSE,
+#                                      doGreylist=FALSE))
+
+```
+
+############################################################################################# 
+
+## Read Quantification
+
+## The dba.count function scores read counts from bam files. Remember to set `RunParallel = FALSE` or specify number of cores, this software can cause memory leaks.
+
+############################################################################################# 
+
+```{r}
+# Setting DBA config parameters manually
+# dba_786_H3K27ac$config$cores <- 4
+# dba_786_H3K4me1$config$cores <- 4
+# dba_OS_H3K27ac$config$cores <- 4
+# dba_batch_H3K27ac$config$cores <- 4
+```
+
+```{r}
+dba_786_H3K27ac <- dba.count(dba_786_H3K27ac)
+dba_786_H3K4me1 <- dba.count(dba_786_H3K4me1)
+dba_OS_H3K27ac <- dba.count(dba_OS_H3K27ac)
+#dba_batch_H3K27ac <- dba.count(dba_batch_H3K27ac)
+```
+
+```{r}
+save(dba_786_H3K27ac, file = file.path(resultsDir, "dba_786_H3K27ac_counts_local.RData"))
+save(dba_786_H3K4me1, file = file.path(resultsDir, "dba_786_H3K4me1_counts_local.RData"))
+save(dba_OS_H3K27ac, file = file.path(resultsDir, "dba_OS_H3K27ac_counts_local.RData"))
+```
+
+
+```{r}
+# save(dba_786_H3K27ac, file = file.path(countsDir, "dba_786_H3K27ac_counts.RData"))
+# save(dba_786_H3K4me1, file = file.path(countsDir, "dba_786_H3K4me1_counts.RData"))
+# save(dba_OS_H3K27ac, file = file.path(countsDir, "dba_OS_H3K27ac_counts.RData"))
+# save(dba_batch_H3K27ac, file = file.path(countsDir, "dba_786-RC2_vs_M1A-LM1.RData"))
+```
+
+############################################################################################# 
+
+## Normalisation
+
+## If not already loaded, load the dba.count RData files created earlier.
+
+############################################################################################# 
+
+```{r}
+load(file = file.path(resultsDir, "dba_786_H3K27ac_counts_local.RData"))
+load(file = file.path(resultsDir, "dba_786_H3K4me1_counts_local.RData"))
+load(file = file.path(resultsDir, "dba_OS_H3K27ac_counts_local.RData"))
+```
+
+
+```{r}
+# load("data/SRP104404/rdata/dba_786_H3K27ac_counts.RData")
+# load("data/SRP104404/rdata/dba_786_H3K4me1_counts.RData")
+# load("data/SRP104404/rdata/dba_OS_H3K27ac_counts.RData")
+```
+
+############################################################################################# 
+
+## Count normalisation based on sequencing depth (DiffBind defaults)
+
+############################################################################################# 
+
+```{r}
+dba_786_H3K27ac <- dba.normalize(dba_786_H3K27ac)
+dba_786_H3K4me1 <- dba.normalize(dba_786_H3K4me1)
+dba_OS_H3K27ac <- dba.normalize(dba_OS_H3K27ac)
+#dba_batch_H3K27ac <- dba.normalize(dba_batch_H3K27ac)
+```
+
+############################################################################################# 
+
+## DBA Design Formula
+
+############################################################################################# 
+
+Set contrasts for differential binding analysis, the option `reorderMeta =` sets the reference level for comparison. NOTE: By default Diffbind requires a minimum of 3 replicates per contrast group. Separate analysis are being performed on each cell line, so only 2 replicates per group are present in this design formula. The minumum number of allowed replicates can be forced with the `minMembers =` option.
+
+```{r}
+dba_786_H3K27ac <- dba.contrast(dba_786_H3K27ac, minMembers = 2, reorderMeta=list(Tissue="786-O"))
+dba_786_H3K4me1 <- dba.contrast(dba_786_H3K4me1, minMembers = 2, reorderMeta=list(Tissue="786-O"))
+dba_OS_H3K27ac <- dba.contrast(dba_OS_H3K27ac, minMembers = 2, reorderMeta=list(Tissue="OS-RC-2"))
+#dba_batch_H3K27ac <- dba.contrast(dba_batch_H3K27ac, design = "~Tissue + Condition", reorderMeta=list(Condition="nonmetastatic"))
+```
+
+############################################################################################# 
+
+Run the differential binding analysis \#############################################################################################
+
+```{r}
+dba_786_H3K27ac <- dba.analyze(dba_786_H3K27ac)
+dba_786_H3K4me1 <- dba.analyze(dba_786_H3K4me1)
+dba_OS_H3K27ac <- dba.analyze(dba_OS_H3K27ac)
+#dba_batch_H3K27ac <- dba.analyze(dba_batch_H3K27ac)
+```
+
+### Results
+
+#### Counts Summary and FRiP
+
+DiffBind can compute the total fraction of reads in peaks (FRiP) for each sample. Summary statistics including FRiP are stored in the dba object and can be extracted with the dba.show function. Save the output of dba.show to a data frame.
+
+#### 786 vs M1A: H3K27ac
+
+```{r}
+counts_summary_786_K27ac <- dba.show(dba_786_H3K27ac)
+libsizes_786_K27ac <- cbind(LibReads=counts_summary_786_K27ac$Reads, 
+                            FRiP=counts_summary_786_K27ac$FRiP, 
+                  PeakReads=round(counts_summary_786_K27ac$Reads * counts_summary_786_K27ac$FRiP))
+rownames(libsizes_786_K27ac) <- counts_summary_786_K27ac$ID
+
+libsizes_786_K27ac
+```
+
+#### 786 vs M1A: H3K4me1
+
+```{r}
+counts_summary_786_K4me1 <- dba.show(dba_786_H3K4me1)
+libsizes_786_K4me1 <- cbind(LibReads=counts_summary_786_K4me1$Reads,  
+                            FRiP=counts_summary_786_K4me1$FRiP, 
+                  PeakReads=round(counts_summary_786_K4me1$Reads * counts_summary_786_K4me1$FRiP))
+rownames(libsizes_786_K4me1) <- counts_summary_786_K4me1$ID
+
+libsizes_786_K4me1
+```
+
+#### OS vs LM1: H3K27ac
+
+```{r}
+counts_summary_OS_K27ac <- dba.show(dba_OS_H3K27ac)
+libsizes_OS_K27ac <- cbind(LibReads=counts_summary_OS_K27ac$Reads, FRiP=counts_summary_OS_K27ac$FRiP, 
+                  PeakReads=round(counts_summary_OS_K27ac$Reads * counts_summary_OS_K27ac$FRiP))
+rownames(libsizes_OS_K27ac) <- counts_summary_OS_K27ac$ID
+
+libsizes_OS_K27ac
+```
+
+#### 786/RC2 vs M1A/LM1 batch corrected: H3K27ac
+
+```{r}
+counts_summary_batched_K27ac <- dba.show(dba_batch_H3K27ac)
+libsizes_batched_K27ac <- cbind(LibReads=counts_summary_batched_K27ac$Reads, FRiP=counts_summary_batched_K27ac$FRiP, 
+                  PeakReads=round(counts_summary_batched_K27ac$Reads * counts_summary_batched_K27ac$FRiP))
+rownames(libsizes_batched_K27ac) <- counts_summary_batched_K27ac$ID
+
+libsizes_batched_K27ac
+```
+
+### DBA Summary
+
+```{r}
+dba.show(dba_786_H3K27ac, bContrasts=TRUE)
+```
+
+```{r}
+dba.show(dba_786_H3K4me1, bContrasts=TRUE)
+```
+
+```{r}
+dba.show(dba_OS_H3K27ac, bContrasts=TRUE)
+```
+
+```{r}
+dba.show(dba_batch_H3K27ac, bContrasts = TRUE)
+```
+
+############################################################################################# 
+
+## Extract results by accessing DBA Report function
+
+############################################################################################# 
+
+```{r}
+dba.report_786_H3K27ac <- dba.report(dba_786_H3K27ac, th = 0.05)
+
+dba.report_786_H3K27ac
+```
+
+```{r}
+sum(dba.report_786_H3K27ac$Fold<0)
+sum(dba.report_786_H3K27ac$Fold>0)
+```
+
+```{r}
+dba.report_786_H3K4me1 <- dba.report(dba_786_H3K4me1, th = 0.05)
+
+dba.report_786_H3K4me1
+```
+
+```{r}
+sum(dba.report_786_H3K4me1$Fold<0)
+sum(dba.report_786_H3K4me1$Fold>0)
+```
+
+```{r}
+dba.report_OS_H3K27ac <- dba.report(dba_OS_H3K27ac, th = 0.05)
+
+dba.report_OS_H3K27ac
+```
+
+```{r}
+sum(dba.report_OS_H3K27ac$Fold<0)
+sum(dba.report_OS_H3K27ac$Fold>0)
+```
+
+```{r}
+dba.report_batch_H3K27ac <- dba.report(dba_batch_H3K27ac, th = 0.05)
+
+dba.report_batch_H3K27ac
+```
+
+```{r}
+sum(dba.report_batch_H3K27ac$Fold<0)
+sum(dba.report_batch_H3K27ac$Fold>0)
+```
+
+############################################################################################# 
+
+## Save reports and write out differential peaks as bed files
+
+############################################################################################# 
+
+```{r}
+save(dba.report_786_H3K27ac, file = file.path(resultsDir, "diffbind_resultsFDR05_786vsM1A_H3K27ac.RData"))
+save(dba.report_786_H3K4me1, file = file.path(resultsDir, "diffbind_resultsFDR05_786vsM1A_H3K4me1.RData"))
+save(dba.report_OS_H3K27ac, file = file.path(resultsDir, "diffbind_resultsFDR05_RC2vsLM1_H3K27ac.RData"))
+#save(dba.report_batch_H3K27ac, file = file.path(resultsDir, "diffbind_resultsFDR05_786_RC2vsM1A_LM1_H3K27ac.RData"))
+```
+
+```{r}
+write.table(dba.report_786_H3K27ac, file = file.path(resultsDir, "diffbind_resultsFDR05_786vsM1A_H3K27ac.granges"), sep="\t", row.names = FALSE)
+write.table(dba.report_786_H3K4me1, file = file.path(resultsDir, "diffbind_resultsFDR05_786vsM1A_H3K4me1.granges"), sep="\t", row.names = FALSE)
+write.table(dba.report_OS_H3K27ac, file = file.path(resultsDir, "diffbind_resultsFDR05_RC2vsLM1_H3K27ac.granges"), sep="\t", row.names = FALSE)
+#write.table(dba.report_batch_H3K27ac, file = file.path(resultsDir, "diffbind_resultsFDR05_786_RC2vsM1A_LM1_H3K27ac.granges"), sep="\t")
+```
+
+```{r}
+# Create bed files for each keeping only significant peaks (p < 0.05). Write separate peak files for gained and lost peaks
+dba_786_H3K27ac.out <- as_tibble(dba.report(dba_786_H3K27ac))
+dba_786_H3K27ac.gain <- dba_786_H3K27ac.out %>% 
+  dplyr::filter(FDR < 0.05 & Fold > 0) %>% 
+  dplyr::select(seqnames, start, end, FDR, Fold)
+  
+dba_786_H3K27ac.loss <- dba_786_H3K27ac.out %>% 
+  dplyr::filter(FDR < 0.05 & Fold < 0) %>% 
+  dplyr::select(seqnames, start, end, FDR, Fold)
+
+dba_786_H3K27ac.all <- dba_786_H3K27ac.out %>% 
+  dplyr::filter(FDR < 0.05) %>% 
+  dplyr::select(seqnames, start, end, FDR, Fold)
+
+# Write to file
+write.table(dba_786_H3K27ac.gain, file = file.path(resultsDir, "diffbind_resFDR05_786vsM1A_H3K27ac_gainedpeaks.bed"), sep="\t", quote=F, row.names=F, col.names=F)
+
+write.table(dba_786_H3K27ac.loss, file = file.path(resultsDir, "diffbind_resFDR05_786vsM1A_H3K27ac_lostpeaks.bed"), sep="\t", quote=F, row.names=F, col.names=F)
+
+write.table(dba_786_H3K27ac.all, file = file.path(resultsDir, "diffbind_resFDR05_786vsM1A_H3K27ac_allpeaks.bed"), sep="\t", quote=F, row.names=F, col.names=F)
+
+#############################################################################################
+
+dba_786_H3K4me1.out <- as_tibble(dba.report(dba_786_H3K4me1))
+dba_786_H3K4me1.gain <- dba_786_H3K4me1.out %>% 
+  dplyr::filter(FDR < 0.05 & Fold > 0) %>% 
+  dplyr::select(seqnames, start, end, FDR, Fold)
+
+dba_786_H3K4me1.loss <- dba_786_H3K4me1.out %>% 
+  dplyr::filter(FDR < 0.05 & Fold < 0) %>% 
+  dplyr::select(seqnames, start, end, FDR, Fold)
+
+dba_786_H3K4me1.all <- dba_786_H3K4me1.out %>% 
+  dplyr::filter(FDR < 0.05) %>% 
+  dplyr::select(seqnames, start, end, FDR, Fold)
+
+# Write to file
+write.table(dba_786_H3K4me1.gain, file = file.path(resultsDir, "diffbind_resFDR05_786vsM1A_H3K4me1_gainedpeaks.bed"), sep="\t", quote=F, row.names=F, col.names=F)
+
+write.table(dba_786_H3K4me1.loss, file = file.path(resultsDir, "diffbind_resFDR05_786vsM1A_H3K4me1_lostpeaks.bed"), sep="\t", quote=F, row.names=F, col.names=F)
+
+write.table(dba_786_H3K4me1.all, file = file.path(resultsDir, "diffbind_resFDR05_786vsM1A_H3K4me1_allpeaks.bed"), sep="\t", quote=F, row.names=F, col.names=F)
+
+#############################################################################################
+
+dba_OS_H3K27ac.out <- as_tibble(dba.report(dba_OS_H3K27ac))
+dba_OS_H3K27ac.gain <- dba_OS_H3K27ac.out %>% 
+  dplyr::filter(FDR < 0.05 & Fold > 0) %>% 
+  dplyr::select(seqnames, start, end, FDR, Fold)
+
+dba_OS_H3K27ac.loss <- dba_OS_H3K27ac.out %>% 
+  dplyr::filter(FDR < 0.05 & Fold < 0) %>% 
+  dplyr::select(seqnames, start, end, FDR, Fold)
+
+dba_OS_H3K27ac.all <- dba_OS_H3K27ac.out %>% 
+  dplyr::filter(FDR < 0.05) %>% 
+  dplyr::select(seqnames, start, end, FDR, Fold)
+
+# Write to file
+write.table(dba_OS_H3K27ac.gain, file = file.path(resultsDir, "diffbind_resFDR05_RC2vsLM1_H3K27ac_gainedpeaks.bed"), sep="\t", quote=F, row.names=F, col.names=F)
+
+write.table(dba_OS_H3K27ac.loss, file = file.path(resultsDir, "diffbind_resFDR05_RC2vsLM1_H3K27ac_lostpeaks.bed"), sep="\t", quote=F, row.names=F, col.names=F)
+
+write.table(dba_OS_H3K27ac.all, file = file.path(resultsDir, "diffbind_resFDR05_RC2vsLM1_H3K27ac_allpeaks.bed"), sep="\t", quote=F, row.names=F, col.names=F)
+
+#############################################################################################
+
+# dba_batch_H3K27ac.out <- as_tibble(dba.report(dba_batch_H3K27ac))
+# dba_batch_H3K27ac.gain <- dba_batch_H3K27ac.out %>% 
+#   dplyr::filter(FDR < 0.05 & Fold > 0) %>% 
+#   dplyr::select(seqnames, start, end, FDR, Fold)
+# 
+# dba_batch_H3K27ac.loss <- dba_batch_H3K27ac.out %>% 
+#   dplyr::filter(FDR < 0.05 & Fold < 0) %>% 
+#   dplyr::select(seqnames, start, end, FDR, Fold)
+# 
+# # Write to file
+# write.table(dba_batch_H3K27ac.gain, file = file.path(resultsDir, "diffbind_resFDR05_786-RC2vsM1A-LM1_H3K27ac_gainedpeaks.bed"), sep="\t", quote=F, row.names=F, col.names=F)
+# 
+# write.table(dba_batch_H3K27ac.loss, file = file.path(resultsDir, "diffbind_resFDR05_786-RC2vsM1A-LM1_H3K27ac_lostpeaks.bed"), sep="\t", quote=F, row.names=F, col.names=F)
+```
+
+############################################################################################# 
+
+## Visualisation of differential binding analysis
+
+############################################################################################# 
+
+```{r}
+# Prep colorRampPallete
+# function for 
+# Apply colorRampPalette Function 
+color_range <- colorRampPalette(c("red", "blue"))    
+colors <- color_range(100)
+```
+
+
+### Sample to Sample Distances
+
+```{r}
+pdf(file = file.path(figureDir, "samp_dists_786_H3K27ac.pdf"))
+print(plot(dba_786_H3K27ac, contrast = 1, margin=20, colScheme = colors))
+dev.off()
+
+pdf(file = file.path(figureDir, "samp_dists_786_H3K4me1.pdf"))
+print(plot(dba_786_H3K4me1, contrast = 1, margin=20, colScheme = colors))
+dev.off()
+
+pdf(file = file.path(figureDir, "samp_dists_OS_H3K27ac.pdf"))
+print(plot(dba_OS_H3K27ac, contrast = 1, margin=20, colScheme = colors))
+dev.off()
+```
+
+### PCA
+
+```{r}
+pdf(file = file.path(figureDir, "PCA_786_H3K27ac.pdf"), width = 5, height = 4)
+dba.plotPCA(dba_786_H3K27ac, contrast=1, label = NULL, vColors = c("red", "blue"))
+dev.off()
+
+svg(file = file.path(figureDir, "PCA_786_H3K27ac.svg"), width = 5, height = 4)
+dba.plotPCA(dba_786_H3K27ac, contrast=1, label = NULL, vColors = c("red", "blue"))
+dev.off()
+
+pdf(file = file.path(figureDir, "PCA_786_H3K4me1.pdf"), width = 5, height = 4)
+dba.plotPCA(dba_786_H3K4me1, contrast=1, label = NULL, vColors = c("red", "blue"))
+dev.off()
+
+svg(file = file.path(figureDir, "PCA_786_H3K4me1.svg"), width = 5, height = 4)
+dba.plotPCA(dba_786_H3K4me1, contrast=1, label = NULL, vColors = c("red", "blue"))
+dev.off()
+
+pdf(file = file.path(figureDir, "PCA_OS_H3K27ac.pdf"), width = 5, height = 4)
+dba.plotPCA(dba_OS_H3K27ac, contrast=1, label = NULL, vColors = c("red", "blue"))
+dev.off()
+
+svg(file = file.path(figureDir, "PCA_OS_H3K27ac.svg"), width = 5, height = 4)
+dba.plotPCA(dba_OS_H3K27ac, contrast=1, label = NULL, vColors = c("red", "blue"))
+dev.off()
+```
+
+### MAplots
+
+```{r}
+pdf(file = file.path(figureDir, "MA_786_H3K27ac.pdf"))
+dba.plotMA(dba_786_H3K27ac)
+dev.off()
+
+pdf(file = file.path(figureDir, "MA_786_H3K4me1.pdf"))
+dba.plotMA(dba_786_H3K4me1)
+dev.off()
+
+pdf(file = file.path(figureDir, "MA_OS_H3K27ac.pdf"))
+dba.plotMA(dba_OS_H3K27ac)
+dev.off()
+```
+
+### Volcano Plots
+
+Diffbind built in volcano plot function
+
+```{r}
+pdf(file = file.path(figureDir, "Volcano_786_H3K27ac.pdf"))
+dba.plotVolcano(dba_786_H3K27ac)
+dev.off()
+
+pdf(file = file.path(figureDir, "Volcano_786_H3K4me1.pdf"))
+dba.plotVolcano(dba_786_H3K4me1)
+dev.off()
+
+pdf(file = file.path(figureDir, "Volcano_OS_H3K27ac.pdf"))
+dba.plotVolcano(dba_OS_H3K27ac)
+dev.off()
+```
+
+custom ggVolcano Plot
+
+```{r}
+# Create categorical column for up, down and .ns genes
+# ggplot_data <- as.data.frame(dba.report_786_H3K27ac)
+# exp <- paste0("786_H3K27ac")
+# ggplot_data <- as.data.frame(dba.report_786_H3K4me1)
+# exp <- paste0("786_H3K4me1")
+ggplot_data <- as.data.frame(dba.report_OS_H3K27ac)
+exp <- paste0("OS_H3K27ac")
+
+
+ggplot_data <- ggplot_data %>% 
+  mutate(count_type = case_when(Fold >= 1 & FDR <= 0.05 ~ "up",
+                               Fold <= -1 & FDR <= 0.05 ~ "down",
+                                TRUE ~ "ns"))
+
+# Obtain gene counts
+mark_counts <- ggplot_data %>% dplyr::count(count_type)
+
+up_count <- mark_counts %>% filter(count_type == "up") %>% pull(n)
+down_count <- mark_counts %>% filter(count_type == "down") %>% pull(n)
+ns_counts <- mark_counts %>% filter(count_type == "ns") %>% pull(n)
+
+# Add color, size, and transparency elements
+cols <- c("up" = "red", "down" = "blue", "ns" = "grey") 
+sizes <- c("up" = 2, "down" = 2, "ns" = 1) 
+alphas <- c("up" = 1, "down" = 1, "ns" = 0.5)
+
+ggVolcano <- ggplot(data = ggplot_data,
+       aes(x = Fold,
+           y = -log10(FDR))) + 
+  geom_point(aes(colour = count_type), 
+             alpha = 0.4, 
+             shape = 19,
+             size = 2) + 
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dashed") + 
+  geom_vline(xintercept = c(log2(0.5), log2(2)),
+             linetype = "dashed") +
+  scale_colour_manual(values = cols) + 
+  scale_x_continuous(breaks = c(seq(-10, 10, 2)),     
+                     limits = c(-10, 10)) +
+  scale_fill_manual(values = cols) +
+  scale_colour_manual(values = cols,
+                      labels = c(
+                       paste("Depleted (", down_count, ")", sep = ""),
+                       paste("Not Significant (", ns_counts, ")", sep = ""),
+                       paste("Enriched (", up_count, ")", sep = ""))) +
+  scale_alpha_manual(values = alphas) + # Modify point transparency
+  labs(x = "log2(fold change)",
+       y = "-log10(adjusted P-value)",
+       colour = "Fold Change") +
+  theme_bw() + # Select theme with a white background  
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5)) +    
+  ylim(0, 20)
+
+ggVolcano
+volcano.pdf <- paste0("ggVolcano_diffbind_", exp, ".pdf")
+pdf(file = file.path(figureDir, volcano.pdf), width = 6, height = 4)
+print(ggVolcano)
+dev.off()
+
+volcano.svg <- paste0("ggVolcano_diffbind_", exp, ".svg")
+svg(file = file.path(figureDir, volcano.svg), width = 6, height = 4)
+print(ggVolcano)
+dev.off()
+```
+
+
+### Box Plots
+
+```{r}
+pdf(file = file.path(figureDir, "Box_786_H3K27ac.pdf"))
+dba.plotBox(dba_786_H3K27ac, vColors = c("#EE4B2B", "#26b3ff"))
+dev.off()
+
+pdf(file = file.path(figureDir, "Box_786_H3K4me1.pdf"))
+dba.plotBox(dba_786_H3K4me1, vColors = c("#EE4B2B", "#26b3ff"))
+dev.off()
+
+pdf(file = file.path(figureDir, "Box_OS_H3K27ac.pdf"))
+dba.plotBox(dba_OS_H3K27ac, vColors = c("#EE4B2B", "#26b3ff"))
+dev.off()
+```
+
+### Read Count Heatmaps
+
+Heatmap of the normalised read counts across all detected binding sites
+
+```{r}
+hmap <- colorRampPalette(c("red", "black", "blue"))(n = 13)
+
+pdf(file = file.path(figureDir, "Heatmap_counts_786_H3K27ac.pdf"))
+dba.plotHeatmap(dba_786_H3K27ac, contrast=1, correlations=FALSE, scale="row", colScheme = colors, margin = 15)
+dev.off()
+
+pdf(file = file.path(figureDir, "Heatmap_counts_786_H3K4me1.pdf"))
+dba.plotHeatmap(dba_786_H3K4me1, contrast=1, correlations=FALSE, scale="row", colScheme = colors, margin = 15)
+dev.off()
+
+pdf(file = file.path(figureDir, "Heatmap_counts_OS_H3K27ac.pdf"))
+dba.plotHeatmap(dba_OS_H3K27ac, contrast=1, correlations=FALSE, scale="row", colScheme = colors, margin = 15)
+dev.off()
+```
+
+### Profile Heatmaps
+
+Generate profile data and plot heatmap with separate calls to ease cpu requirements and re-plotting if needed.
+
+
+```{r}
+profiles_786_K27ac <- dba.plotProfile(dba_786_H3K27ac)
+profiles_786_K4me1 <- dba.plotProfile(dba_786_H3K4me1)
+profiles_OS_K27ac <- dba.plotProfile(dba_OS_H3K27ac)
+#profiles_batch_K27ac <- dba.plotProfile(dba_batch_H3K27ac)
+
+save(profiles_786_K27ac, file = file.path(resultsDir, "dba.plotprofile_786_H3K27ac.RData"))
+save(profiles_786_K4me1, file = file.path(resultsDir, "dba.plotprofile_786_H3K4me1.RData"))
+save(profiles_OS_K27ac, file = file.path(resultsDir, "dba.plotprofile_OS_H3K27ac.RData"))
+#save(profiles_batch_K27ac, file = file.path(resultsDir, "dba.plotprofile_batch_H3K27ac.RData"))
+```
+
+```{r}
+load(file = file.path(resultsDir, "dba.plotprofile_786_H3K27ac.RData"))
+load(file = file.path(resultsDir, "dba.plotprofile_786_H3K4me1.RData"))
+load(file = file.path(resultsDir, "dba.plotprofile_OS_H3K27ac.RData"))
+```
+
+
+```{r}
+# Plot count profile heatmap (default)
+pdf(file = file.path(figureDir, "differential_profile_786_H3K27ac.pdf"), width = 4, height = 7)
+dba.plotProfile(profiles_786_K27ac, gap = 10)
+dev.off()
+
+svg(file = file.path(figureDir, "differential_profile_786_H3K27ac.svg"), width = 4, height = 7)
+dba.plotProfile(profiles_786_K27ac, gap = 10)
+dev.off()
+
+png(file = file.path(figureDir, "differential_profile_786_H3K27ac.png"), width = 400, height = 700)
+dba.plotProfile(profiles_786_K27ac, gap = 10)
+dev.off()
+
+
+
+pdf(file = file.path(figureDir, "differential_profile_786_H3K4me1.pdf"), width = 4, height = 7)
+dba.plotProfile(profiles_786_K4me1, gap = 10)
+dev.off()
+
+svg(file = file.path(figureDir, "differential_profile_786_H3K4me1.svg"), width = 4, height = 7)
+dba.plotProfile(profiles_786_K4me1, gap = 10)
+dev.off()
+
+png(file = file.path(figureDir, "differential_profile_786_H3K4me1.png"), width = 400, height = 700)
+dba.plotProfile(profiles_786_K4me1, gap = 10)
+dev.off()
+
+
+
+pdf(file = file.path(figureDir, "differential_profile_OS_H3K27ac.pdf"), width = 4, height = 7)
+dba.plotProfile(profiles_OS_K27ac, gap = 10)
+dev.off()
+
+svg(file = file.path(figureDir, "differential_profile_OS_H3K27ac.svg"), width = 4, height = 7)
+dba.plotProfile(profiles_OS_K27ac, gap = 10)
+dev.off()
+
+png(file = file.path(figureDir, "differential_profile_OS_H3K27ac.png"), width = 400, height = 700)
+dba.plotProfile(profiles_OS_K27ac, gap = 10)
+dev.off()
+
+# pdf(file = file.path(figureDir, "differential_profile_batched_H3K27ac.pdf"), width = 5, height = 10)
+# dba.plotProfile(profiles_batch_K27ac, gap=10)
+# dev.off()
+```
+
+

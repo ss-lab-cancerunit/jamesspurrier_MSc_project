@@ -1,0 +1,934 @@
+---
+title: "Annotate Peaks"
+author: "James Spurrier"
+date: "r Sys.Date()`"
+output: html_document
+editor:
+  mode: source
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Peak Annotation with Chipseeker and ChippeakAnno
+
+## Dataset: SRP104404
+
+```{r}
+library(tidyverse)
+library(ChIPseeker)
+library(clusterProfiler)
+library(ChIPpeakAnno)
+library(AnnotationDbi)
+library(AnnotationHub)
+library(UpSetR)
+library(DiffBind)
+library(profileplyr)
+library(regioneR)
+library(plyranges)
+library(rtracklayer)
+```
+
+```{r}
+sample_sheet <- read.csv("metadata/chipseq/SRP104404/SRP104404_samplesheet.csv")
+resultsDir <- file.path("results/chipseq/SRP104404/downstream")
+figureDir <- file.path(resultsDir, "figures")
+
+diffbindpath <- file.path("results/chipseq/SRP104404/diffbind")
+deseqpath <- file.path("results/rnaseq/SRP104161/deseq2")
+macspeakpath <- file.path("/media/james/META70006/ThesisProject/data/SRP104404/peaks/cmbreps")
+tmpDir <- file.path("/media/james/META70006/ThesisProject/data/tmp")
+```
+
+```{r}
+dir.create(resultsDir)
+dir.create(figureDir)
+```
+
+Read in Peak Files
+
+```{r}
+# Load macs3 peak data
+macs3_M1A_H3K27ac <- read_narrowpeaks(file = file.path(macspeakpath, "M1A-H3K27ac_cmbreps_peaks.narrowPeak")) %>% as_granges()
+
+macs3_786O_H3K27ac <- read_narrowpeaks(file = file.path(macspeakpath, "786-H3K27ac_cmbreps_peaks.narrowPeak")) %>% as_granges()
+
+macs3_M1A_H3K4me1 <- read_narrowpeaks(file = file.path(macspeakpath, "M1A-H3K4me1_cmbreps_peaks.narrowPeak")) %>% as_granges()
+
+macs3_786O_H3K4me1 <- read_narrowpeaks(file = file.path(macspeakpath, "786-H3K4me1_cmbreps_peaks.narrowPeak")) %>% as_granges()
+
+macs3_LM1_H3K27ac <- read_narrowpeaks(file = file.path(macspeakpath, "LM1-H3K27ac_cmbreps_peaks.narrowPeak")) %>% as_granges()
+
+macs3_RC2_H3K27ac <- read_narrowpeaks(file = file.path(macspeakpath, "RC2-H3K27ac_cmbreps_peaks.narrowPeak")) %>% as_granges()
+
+# Read in diffbind peaks
+diffbind_786_H3K27ac <- read_tsv(file = file.path(diffbindpath, "diffbind_resultsFDR05_786vsM1A_H3K27ac.granges")) %>% as_granges()
+diffbind_786_H3K27ac <- sortSeqlevels(diffbind_786_H3K27ac) # Sort sequence levels by chr order
+diffbind_786_H3K27ac <- sort(diffbind_786_H3K27ac)
+
+# Read in diffbind peaks
+diffbind_786_H3K4me1 <- read_tsv(file = file.path(diffbindpath, "diffbind_resultsFDR05_786vsM1A_H3K4me1.granges")) %>% as_granges()
+diffbind_786_H3K4me1 <- sortSeqlevels(diffbind_786_H3K4me1) # Sort sequence levels by chr order
+diffbind_786_H3K4me1 <- sort(diffbind_786_H3K4me1)
+
+# Read in diffbind peaks
+diffbind_OS_H3K27ac <- read_tsv(file = file.path(diffbindpath, "diffbind_resultsFDR05_RC2vsLM1_H3K27ac.granges")) %>% as_granges()
+diffbind_OS_H3K27ac <- sortSeqlevels(diffbind_OS_H3K27ac) # Sort sequence levels by chr order
+diffbind_OS_H3K27ac <- sort(diffbind_OS_H3K27ac)
+```
+
+# Find unique chipseq peaks in each sample
+
+```{r}
+# Subset unique peaks in metastatic cells using Genomic Ranges setdiff
+macs3_unique_M1A_H3K27ac <- subsetByOverlaps(macs3_M1A_H3K27ac, macs3_786O_H3K27ac, invert = TRUE)
+macs3_unique_M1A_H3K4me1 <- subsetByOverlaps(macs3_M1A_H3K4me1, macs3_786O_H3K4me1, invert = TRUE)
+macs3_unique_LM1_H3K27ac <- subsetByOverlaps(macs3_LM1_H3K27ac, macs3_RC2_H3K27ac, invert = TRUE)
+
+macs3_unique_786O_H3K27ac <- subsetByOverlaps(macs3_786O_H3K27ac, macs3_M1A_H3K27ac, invert = TRUE)
+macs3_unique_786O_H3K4me1 <- subsetByOverlaps(macs3_786O_H3K4me1, macs3_M1A_H3K4me1, invert = TRUE)
+macs3_unique_OSRC2_H3K27ac <- subsetByOverlaps(macs3_RC2_H3K27ac, macs3_LM1_H3K27ac, invert = TRUE)
+
+file_name <-  paste0("M1A-H3K27ac_cmbreps_peaks_unique.narrowPeak")
+write_narrowpeaks(macs3_unique_M1A_H3K27ac, file = file.path(macspeakpath, file_name))
+
+file_name <-  paste0("M1A-H3K4me1_cmbreps_peaks_unique.narrowPeak")
+write_narrowpeaks(macs3_unique_M1A_H3K4me1, file = file.path(macspeakpath, file_name))
+
+file_name <-  paste0("LM1-H3K27ac_cmbreps_peaks_unique.narrowPeak")
+write_narrowpeaks(macs3_unique_LM1_H3K27ac, file = file.path(macspeakpath, file_name))
+```
+
+
+```{r}
+# List peak files prior to annotation
+peaks_786_H3K27ac <- GRangesList(macs3_M1A_H3K27ac = macs3_M1A_H3K27ac,
+                                 macs3_786O_H3K27ac = macs3_786O_H3K27ac,
+                                 diffbind_786_H3K27ac = diffbind_786_H3K27ac)
+
+peaks_786_H3K4me1 <- GRangesList(macs3_M1A_H3K4me1 = macs3_M1A_H3K4me1,
+                                macs3_786O_H3K4me1 = macs3_786O_H3K4me1,
+                                diffbind_786_H3K4me1 = diffbind_786_H3K4me1)
+
+peaks_OS_H3K27ac <- GRangesList(macs3_LM1_H3K27ac = macs3_LM1_H3K27ac,
+                                macs3_RC2_H3K27ac = macs3_RC2_H3K27ac,
+                                diffbind_OS_H3K27ac = diffbind_OS_H3K27ac)
+
+diffpeaks <- GRangesList(`786-O vs M1A` = diffbind_786_H3K27ac,
+                         `OS-RC2 vs LM1` = diffbind_OS_H3K27ac)
+
+peaks_unique_786 <- GRangesList(M1A_H3K27ac_gain = macs3_unique_M1A_H3K27ac,
+                                M1A_H3K27ac_loss = macs3_unique_786O_H3K27ac)
+
+peaks_unique_OS <- GRangesList(LM1_H3K27ac_gain = macs3_unique_LM1_H3K27ac,
+                               LM1_H3K27ac_loss = macs3_unique_OSRC2_H3K27ac)
+```
+
+Prepare annotation files: Chipseeker reqiures UCSC-style chromosome names, as we are using Ensembl annotations we must convert style information of chr names using `seqlevelsStyle` bioconductor function. Ensembl 111 is the p14 build of the GRChg38 primary assembly
+
+```{r}
+ah <- AnnotationHub()
+ah
+
+ensdb_query <- query(ah, pattern = c("Homo sapiens", "EnsDB"))
+ensdb_query
+
+ensembl_grch38.p14 <- ensdb_query[["AH116291"]]
+class(ensembl_grch38.p14)
+
+ens_hg38 <- ensembl_grch38.p14
+seqlevelsStyle(ens_hg38) <- "UCSC" # Change chromosome names from N to chrN
+```
+
+## Annotate peaks with Chipseeker
+
+```{r}
+chpskr_peaks_786_H3K27ac <- lapply(peaks_786_H3K27ac, annotatePeak, TxDb = ens_hg38,
+                       annoDb="org.Hs.eg.db",
+                       tssRegion=c(-2500, 2500),
+                       verbose=FALSE)
+
+chpskr_peaks_786_H3K4me1 <- lapply(peaks_786_H3K4me1, annotatePeak, TxDb = ens_hg38,
+                       annoDb="org.Hs.eg.db",
+                       tssRegion=c(-2500, 2500),
+                       verbose=FALSE)
+
+chpskr_peaks_OS_H3K27ac <- lapply(peaks_OS_H3K27ac, annotatePeak, TxDb = ens_hg38,
+                       annoDb="org.Hs.eg.db",
+                       tssRegion=c(-2500, 2500),
+                       verbose=FALSE)
+
+chpskr_peaks_unique_M1A_H3K27ac <- lapply(peaks_unique_786, annotatePeak, TxDb = ens_hg38,
+                       annoDb="org.Hs.eg.db",
+                       tssRegion=c(-2500, 2500),
+                       verbose=FALSE)
+
+chpskr_peaks_unique_LM1_H3K27ac <- lapply(peaks_unique_OS, annotatePeak, TxDb = ens_hg38,
+                       annoDb="org.Hs.eg.db",
+                       tssRegion=c(-2500, 2500),
+                       verbose=FALSE)
+```
+
+
+```{r}
+# Save Results of genomic annotation summary
+for (name in names(chpskr_peaks_786_H3K27ac)) {
+  file_name <- paste0("chipseekerResults_", name, ".tsv") # Take the name of the interaction type from names(list)
+  write.table(chpskr_peaks_786_H3K27ac[[name]], file = file.path(resultsDir, file_name), sep = "\t", row.names = FALSE, col.names = TRUE)
+}
+
+for (name in names(chpskr_peaks_786_H3K4me1)) {
+  file_name <- paste0("chipseekerResults_", name, ".tsv") # Take the name of the interaction type from names(list)
+  write.table(chpskr_peaks_786_H3K4me1[[name]], file = file.path(resultsDir, file_name), sep = "\t", row.names = FALSE, col.names = TRUE)
+}
+
+for (name in names(chpskr_peaks_OS_H3K27ac)) {
+  file_name <- paste0("chipseekerResults_", name, ".tsv") # Take the name of the interaction type from names(list)
+  write.table(chpskr_peaks_OS_H3K27ac[[name]], file = file.path(resultsDir, file_name), sep = "\t", row.names = FALSE, col.names = TRUE)
+}
+```
+
+
+## Chi-Squared test for differences in feature distibution
+
+786 cell lines H3K27ac
+
+```{r}
+# Build dataframes from Chipseeker Summary stats (has to been done manually which is annoying) 
+print(chpskr_peaks_786_H3K27ac$macs3_M1A_H3K27ac)
+
+df_A <- data.frame(
+  Feature = c("Promoter (<=1kb)", "Promoter (1-2kb)", "Promoter (2-3kb)", "5' UTR", "3' UTR", 
+              "1st Exon", "Other Exon", "1st Intron", "Other Intron", "Downstream (<=300)", "Distal Intergenic"),
+  Frequency = c(28.39416200, 6.49195429, 2.65858209, 0.28082245, 1.68979322, 
+                0.05927394, 2.42440143, 14.54155006, 23.47248134, 0.08162313, 19.90535603)
+)
+
+# Convert frequencies to counts
+total_peaks_A <- 103038
+df_A$Count <- df_A$Frequency / 100 * total_peaks_A
+
+# Repeat similarly for each peak set
+print(chpskr_peaks_786_H3K27ac$macs3_786O_H3K27ac)
+
+df_B <- data.frame(
+  Feature = c("Promoter (<=1kb)", "Promoter (1-2kb)", "Promoter (2-3kb)", "5' UTR", "3' UTR", 
+              "1st Exon", "Other Exon", "1st Intron", "Other Intron", "Downstream (<=300)", "Distal Intergenic"),
+  Frequency = c(25.45831045, 7.84286075, 3.21522407, 0.32285837, 2.19692134, 
+                0.06605608, 2.79959030, 14.87523565, 24.54762718, 0.12023691, 18.55507890)
+)
+total_peaks_B <- 134905
+df_B$Count <- df_B$Frequency / 100 * total_peaks_B
+```
+
+```{r}
+# Convert dataframes to matrix suitable for Chi Squared test
+combined_counts <- data.frame(
+  Feature = df_A$Feature,
+  M1A = df_A$Count,
+  x786O = df_B$Count)
+
+combined_counts_mat <- combined_counts
+# Set row names to the feature names and remove the Feature column
+row.names(combined_counts_mat) <- combined_counts_mat$Feature
+combined_counts_mat$Feature <- NULL
+```
+
+```{r}
+# Perform Chi Squared Test
+chisq_test <- chisq.test(combined_counts_mat)
+print(chisq_test)
+
+# Check the residuals to see where the differences lie
+residuals <- chisq_test$residuals
+print(residuals)
+
+# Extract p-value
+p_value <- chisq_test$p.value
+p_value
+```
+
+```{r}
+# Bar plot of residuals
+# reshape residuals for plotting
+residuals_long <- melt(residuals, varnames = c("Feature", "Sample"), value.name = "Residual")
+# Rename samples
+residuals_long$Sample <- factor(residuals_long$Sample, levels = c("M1A", "x786O"),
+                                labels = c("786-M1A", "786-O"))
+# Choose custom plot colors
+custom_colors <- c("786-M1A" = "#EE4B2B", "786-O" = "#26b3ff")
+# Plot
+ggBar <- ggplot(residuals_long, aes(x = Feature, y = Residual, fill = Sample)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = custom_colors) +
+  theme_bw() +
+  labs(title = "Standardized Residuals of Chi-squared Test", x = "Feature", y = "Residual") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggBar
+# Save
+plot_title <- paste0("stnd_residuals_chiTest_chpskr_featureDistribution_786_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 5, height = 3)
+print(ggBar)
+dev.off()
+
+plot_title <- paste0("stnd_residuals_chiTest_chpskr_featureDistribution_786_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 5, height = 3)
+print(ggBar)
+dev.off()
+```
+
+For OS cell lines
+
+```{r}
+# Build dataframes from Chipseeker Summary stats (has to been done manually which is annoying) 
+print(chpskr_peaks_OS_H3K27ac$macs3_LM1_H3K27ac)
+
+df_A <- data.frame(
+  Feature = c("Promoter (<=1kb)", "Promoter (1-2kb)", "Promoter (2-3kb)", "5' UTR", "3' UTR", 
+              "1st Exon", "Other Exon", "1st Intron", "Other Intron", "Downstream (<=300)", "Distal Intergenic"),
+  Frequency = c(23.29228775, 7.48930655, 3.21710953, 0.29552819, 2.09786131, 0.05703176, 2.72132210, 15.31626701, 23.92482178, 0.09980557, 21.48865846)
+)
+# Convert frequencies to counts
+total_peaks_A <- 154593 
+df_A$Count <- df_A$Frequency / 100 * total_peaks_A
+
+# Repeat similarly for each peak set
+print(chpskr_peaks_OS_H3K27ac$macs3_RC2_H3K27ac)
+
+df_B <- data.frame(
+  Feature = c("Promoter (<=1kb)", "Promoter (1-2kb)", "Promoter (2-3kb)", "5' UTR", "3' UTR", 
+              "1st Exon", "Other Exon", "1st Intron", "Other Intron", "Downstream (<=300)", "Distal Intergenic"),
+  Frequency = c(23.52414518, 7.41124975, 3.09595543, 0.29986073, 2.04573231, 0.05471392, 2.71722139, 15.58991558, 24.89270386, 0.11298070, 20.25552113)
+)
+total_peaks_B <- 140894 
+df_B$Count <- df_B$Frequency / 100 * total_peaks_B
+```
+
+```{r}
+# Convert dataframes to matrix suitable for Chi Squared test
+combined_counts <- data.frame(
+  Feature = df_A$Feature,
+  LM1 = df_A$Count,
+  RC2 = df_B$Count)#,
+  #Diffbind = df_diff$Count
+#)
+combined_counts_mat <- combined_counts
+# Set row names to the feature names and remove the Feature column
+row.names(combined_counts_mat) <- combined_counts_mat$Feature
+combined_counts_mat$Feature <- NULL
+```
+
+```{r}
+# Perform Chi Squared Test
+chisq_test <- chisq.test(combined_counts_mat)
+print(chisq_test)
+
+# Check the residuals to see where the differences lie
+residuals <- chisq_test$residuals
+print(residuals)
+
+# Extract p-value
+p_value <- chisq_test$p.value
+p_value
+```
+
+```{r}
+# Bar plot of residuals
+# reshape residuals for plotting
+residuals_long <- melt(residuals, varnames = c("Feature", "Sample"), value.name = "Residual")
+# Rename samples
+residuals_long$Sample <- factor(residuals_long$Sample, levels = c("LM1", "RC2"),
+                                labels = c("OS-LM1", "OS-RC2"))
+# Choose custom plot colors
+custom_colors <- c("OS-LM1" = "#EE4B2B", "OS-RC2" = "#26b3ff")
+# Plot
+ggBar <- ggplot(residuals_long, aes(x = Feature, y = Residual, fill = Sample)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = custom_colors) +
+  theme_bw() +
+  labs(title = "Standardized Residuals of Chi-squared Test", x = "Feature", y = "Residual") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggBar
+# Save
+plot_title <- paste0("stnd_residuals_chiTest_chpskr_featureDistribution_OS_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 5, height = 3)
+print(ggBar)
+dev.off()
+
+plot_title <- paste0("stnd_residuals_chiTest_chpskr_featureDistribution_OS_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 5, height = 3)
+print(ggBar)
+dev.off()
+```
+
+
+## Plot Feature Distribution with Chipseeker
+
+```{r}
+plot_title <- paste0("feature_distribution_peaks_786_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 8, height = 3)
+print(plotAnnoBar(chpskr_peaks_786_H3K27ac))
+dev.off()
+
+plot_title <- paste0("feature_distribution_peaks_786_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 8, height = 3)
+print(plotAnnoBar(chpskr_peaks_786_H3K27ac))
+dev.off()
+#############################################
+plot_title <- paste0("feature_distribution_peaks_786_H3K4me1.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 8, height = 3)
+print(plotAnnoBar(chpskr_peaks_786_H3K4me1))
+dev.off()
+
+plot_title <- paste0("feature_distribution_peaks_786_H3K4me1.svg")
+svg(file=file.path(figureDir, plot_title), width = 8, height = 3)
+print(plotAnnoBar(chpskr_peaks_786_H3K4me1))
+dev.off()
+#############################################
+plot_title <- paste0("feature_distribution_peaks_OS_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 8, height = 3)
+print(plotAnnoBar(chpskr_peaks_OS_H3K27ac))
+dev.off()
+
+plot_title <- paste0("feature_distribution_peaks_OS_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 8, height = 3)
+print(plotAnnoBar(chpskr_peaks_OS_H3K27ac))
+dev.off()
+```
+
+## Plot Distance to TSS
+
+```{r}
+plot_title <- paste0("plotDistToTSS_peaks_786_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 8, height = 3)
+print(plotDistToTSS(chpskr_peaks_786_H3K27ac))
+dev.off()
+
+plot_title <- paste0("plotDistToTSS_peaks_786_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 8, height = 3)
+print(plotDistToTSS(chpskr_peaks_786_H3K27ac))
+dev.off()
+#############################################
+plot_title <- paste0("plotDistToTSS_peaks_786_H3K4me1.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 8, height = 3)
+print(plotDistToTSS(chpskr_peaks_786_H3K4me1))
+dev.off()
+
+plot_title <- paste0("plotDistToTSS_peaks_786_H3K4me1.svg")
+svg(file=file.path(figureDir, plot_title), width = 8, height = 3)
+print(plotDistToTSS(chpskr_peaks_786_H3K4me1))
+dev.off()
+#############################################
+plot_title <- paste0("plotDistToTSS_peaks_OS_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 8, height = 3)
+print(plotDistToTSS(chpskr_peaks_OS_H3K27ac))
+dev.off()
+
+plot_title <- paste0("plotDistToTSS_peaks_OS_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 8, height = 3)
+print(plotDistToTSS(chpskr_peaks_OS_H3K27ac))
+dev.off()
+```
+
+## Plot anno pie chart for gain and loss
+
+Separate diffbind results to gain and loss and annotate each individually
+
+```{r}
+db_up_786_H3K27ac <- diffbind_786_H3K27ac %>% dplyr::filter(Fold > 0)
+db_down_786_H3K27ac <- diffbind_786_H3K27ac %>% dplyr::filter(Fold < 0)
+db_peaks_786_H3K27ac <- GRangesList(db_up_786_H3K27ac = db_up_786_H3K27ac,
+                                    db_down_786_H3K27ac = db_down_786_H3K27ac)
+
+db_up_786_H3K4me1 <- diffbind_786_H3K4me1 %>% dplyr::filter(Fold > 0)
+db_down_786_H3K4me1 <- diffbind_786_H3K4me1 %>% dplyr::filter(Fold < 0)
+db_peaks_786_H3K4me1 <- GRangesList(db_up_786_H3K4me1 = db_up_786_H3K4me1,
+                                    db_down_786_H3K4me1 = db_down_786_H3K4me1)
+
+db_up_OS_H3K27ac <- diffbind_OS_H3K27ac %>% dplyr::filter(Fold > 0)
+db_down_OS_H3K27ac <- diffbind_OS_H3K27ac %>% dplyr::filter(Fold < 0)
+db_peaks_OS_H3K27ac <- GRangesList(db_up_OS_H3K27ac = db_up_OS_H3K27ac,
+                                    db_down_OS_H3K27ac = db_down_OS_H3K27ac)
+```
+
+
+```{r}
+# Annotate diffbind gained and lost peaks
+chpskr_dbpeaks_786_H3K27ac <- lapply(db_peaks_786_H3K27ac, annotatePeak, TxDb = ens_hg38,
+                       annoDb="org.Hs.eg.db",
+                       tssRegion=c(-2500, 2500),
+                       verbose=FALSE)
+
+chpskr_dbpeaks_786_H3K4me1 <- lapply(db_peaks_786_H3K4me1, annotatePeak, TxDb = ens_hg38,
+                       annoDb="org.Hs.eg.db",
+                       tssRegion=c(-2500, 2500),
+                       verbose=FALSE)
+
+chpskr_dbpeaks_OS_H3K27ac <- lapply(db_peaks_OS_H3K27ac, annotatePeak, TxDb = ens_hg38,
+                       annoDb="org.Hs.eg.db",
+                       tssRegion=c(-2500, 2500),
+                       verbose=FALSE)
+```
+
+
+```{r}
+plot_title <- paste0("plotAnnoPie_gained_peaks_786_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_dbpeaks_786_H3K27ac$db_up_786_H3K27ac))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_gained_peaks_786_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_dbpeaks_786_H3K27ac$db_up_786_H3K27ac))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_lost_peaks_786_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_dbpeaks_786_H3K27ac$db_down_786_H3K27ac))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_lost_peaks_786_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_dbpeaks_786_H3K27ac$db_down_786_H3K27ac))
+dev.off()
+#############################################
+plot_title <- paste0("plotAnnoPie_gained_peaks_786_H3K4me1.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_dbpeaks_786_H3K4me1$db_up_786_H3K4me1))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_gained_peaks_786_H3K4me1.svg")
+svg(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_dbpeaks_786_H3K4me1$db_up_786_H3K4me1))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_lost_peaks_786_H3K4me1.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_dbpeaks_786_H3K4me1$db_down_786_H3K4me1))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_lost_peaks_786_H3K4me1.svg")
+svg(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_dbpeaks_786_H3K4me1$db_down_786_H3K4me1))
+dev.off()
+##############################################
+plot_title <- paste0("plotAnnoPie_gained_peaks_OS_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_dbpeaks_OS_H3K27ac$db_up_OS_H3K27ac))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_gained_peaks_OS_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_dbpeaks_OS_H3K27ac$db_up_OS_H3K27ac))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_lost_peaks_OS_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_dbpeaks_OS_H3K27ac$db_down_OS_H3K27ac))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_lost_peaks_OS_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_dbpeaks_OS_H3K27ac$db_down_OS_H3K27ac))
+dev.off()
+```
+
+Anno pie charts for unique macs3 peaks
+
+```{r}
+plot_title <- paste0("plotAnnoPie_gained_macspeaks_M1A_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_peaks_unique_M1A_H3K27ac$M1A_H3K27ac_gain))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_gained_macspeaks_M1A_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_peaks_unique_M1A_H3K27ac$M1A_H3K27ac_gain))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_lost_macspeaks_M1A_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_peaks_unique_M1A_H3K27ac$M1A_H3K27ac_loss))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_lost_macspeaks_M1A_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_peaks_unique_M1A_H3K27ac$M1A_H3K27ac_loss))
+dev.off()
+#############################################
+plot_title <- paste0("plotAnnoPie_gained_macspeaks_LM1_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_peaks_unique_LM1_H3K27ac$LM1_H3K27ac_gain))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_gained_macspeaks_LM1_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_peaks_unique_LM1_H3K27ac$LM1_H3K27ac_gain))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_lost_macspeaks_LM1_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_peaks_unique_LM1_H3K27ac$LM1_H3K27ac_loss))
+dev.off()
+
+plot_title <- paste0("plotAnnoPie_lost_macspeaks_LM1_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 6, height = 3)
+print(plotAnnoPie(chpskr_peaks_unique_LM1_H3K27ac$LM1_H3K27ac_loss))
+dev.off()
+```
+
+
+## Compare peak profiles with ChipPeakAnno and RegioneR
+This step tests for statistical differences in peak distributions between samples and for permutation testing and drawing venn diagrams. Find and visualise statistically significant overlaps between H3K27ac and H3K4me1 in the 786 cells and, H3K27ac peaks in 786 and OS cell lines using the peakPermTest and venn.diagram functions in chippeakanno and regioneR. Annotate peaks to nearest TSS, then use Wilcoxon Rank Sum test on distances to features between Diffbind Peaks and Macs3 peaks (are Diffbind peaks distributed differently to macs3 peaks?).
+
+```{r}
+# Primary annotation can use ensembl genes
+hg38_genes <- genes(ensembl_grch38.p14)
+# permutation test requires txdb for some reason
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+txdb <- genes(TxDb.Hsapiens.UCSC.hg38.knownGene)
+```
+
+## Pairwise Wilcoxon Rank Sum Test
+
+Annotate Peak In Batch
+
+```{r}
+chpkno_786_H3K27ac <- lapply(peaks_786_H3K27ac, annotatePeakInBatch,
+                           AnnotationData = hg38_genes,
+                           featureType = "TSS",
+                           output = "nearestLocation",
+                           PeakLocForDistance = "start",
+                           FeatureLocForDistance = "TSS")
+
+chpkno_786_H3K4me1 <- lapply(peaks_786_H3K4me1, annotatePeakInBatch,
+                           AnnotationData = hg38_genes,
+                           featureType = "TSS",
+                           output = "nearestLocation",
+                           PeakLocForDistance = "start",
+                           FeatureLocForDistance = "TSS")
+
+chpkno_OS_H3K27ac <- lapply(peaks_OS_H3K27ac, annotatePeakInBatch,
+                           AnnotationData = hg38_genes,
+                           featureType = "TSS",
+                           output = "nearestLocation",
+                           PeakLocForDistance = "start",
+                           FeatureLocForDistance = "TSS",)
+
+chpkno_diffbind_H3K27ac <- lapply(diffpeaks, annotatePeakInBatch,
+                           AnnotationData = hg38_genes,
+                           featureType = "TSS",
+                           output = "nearestLocation",
+                           PeakLocForDistance = "start",
+                           FeatureLocForDistance = "TSS",)
+```
+
+## Mean dists to ANY TSS
+
+```{r}
+# Test for statistically significant differences in distance to TSS between diffbind peaks and all called macs3 peaks for each cell line and histone mark
+
+# Prepare dataframes
+peakdists_macs_M1A_H3K27ac <- chpkno_786_H3K27ac$macs3_M1A_H3K27ac %>% as_tibble() %>% dplyr::select(distancetoFeature)
+peakdists_macs_786O_H3K27ac <- chpkno_786_H3K27ac$macs3_786O_H3K27ac %>% as_tibble() %>% dplyr::select(distancetoFeature)
+peakdists_diffbind_786_H3K27ac <- chpkno_786_H3K27ac$diffbind_786_H3K27ac %>% as_tibble() %>% dplyr::select(distancetoFeature)
+
+# Add columns with group/sample name and combine the dataframes
+peakdists_786_ls <- list(peakdists_macs_M1A_H3K27ac = peakdists_macs_M1A_H3K27ac,
+                      peakdists_macs_786O_H3K27ac = peakdists_macs_786O_H3K27ac,
+                      peakdists_diffbind_786_H3K27ac = peakdists_diffbind_786_H3K27ac)
+
+peakdists_786 <- do.call(rbind, lapply(names(peakdists_786_ls), function(name) {
+  df <- peakdists_786_ls[[name]]
+  df$group <- name
+  df
+}))
+# Perform Kruskal Wallace Test
+kruskal_result <- kruskal.test(distancetoFeature ~ group, data = peakdists_786)
+print(kruskal_result)
+
+# Perform pairwise Wilcox test to check which groups are different
+wilcox_result <- pairwise.wilcox.test(peakdists_786$distancetoFeature, peakdists_786$group,
+                 p.adjust.method = "BH")
+print(wilcox_result)
+################################################################
+# Test for statistically significant differences in distance to TSS between diffbind peaks and all called macs3 peaks for each cell line and histone mark
+
+# Prepare dataframes
+peakdists_macs_LM1_H3K27ac <- chpkno_OS_H3K27ac$macs3_LM1_H3K27ac %>% as_tibble() %>% dplyr::select(distancetoFeature)
+peakdists_macs_RC2_H3K27ac <- chpkno_OS_H3K27ac$macs3_RC2_H3K27ac %>% as_tibble() %>% dplyr::select(distancetoFeature)
+peakdists_diffbind_OS_H3K27ac <- chpkno_OS_H3K27ac$diffbind_OS_H3K27ac %>% as_tibble() %>% dplyr::select(distancetoFeature)
+
+# Add columns with group/sample name and combine the dataframes
+peakdists_OS_ls <- list(peakdists_macs_LM1_H3K27ac = peakdists_macs_LM1_H3K27ac,
+                      peakdists_macs_RC2_H3K27ac = peakdists_macs_RC2_H3K27ac,
+                      peakdists_diffbind_OS_H3K27ac = peakdists_diffbind_OS_H3K27ac)
+
+peakdists_OS <- do.call(rbind, lapply(names(peakdists_OS_ls), function(name) {
+  df <- peakdists_OS_ls[[name]]
+  df$group <- name
+  df
+}))
+# Perform Kruskal Wallace Test
+kruskal_result <- kruskal.test(distancetoFeature ~ group, data = peakdists_OS)
+print(kruskal_result)
+
+# Perform pairwise Wilcox test to check which groups are different
+wilcox_result <- pairwise.wilcox.test(peakdists_OS$distancetoFeature, peakdists_OS$group,
+                 p.adjust.method = "BH")
+print(wilcox_result)
+```
+
+## Mean Dists to DEG TSS
+
+```{r}
+# Load Deseq2 results
+load(file = file.path(deseqpath, "DESeq2_results_FDR05_LFC58_786_vs_M1A.RData"))
+# Take only sig results and convert to tbl
+deseqRes_786 <- as_tibble(res05_Lfc05, rownames = "gene_id")
+# Subset gencode promoters Granges for only DESeq2 results
+DEGs_786 <- hg38_genes[hg38_genes$gene_id %in% deseqRes_786$gene_id]
+
+# Load Deseq2 results
+load(file = file.path(deseqpath, "DESeq2_results_FDR05_LFC58_OS-RC2_LM1.RData"))
+# Take only sig results and convert to tbl
+deseqRes_OS <- as_tibble(res05_Lfc05, rownames = "gene_id")
+# Subset gencode promoters Granges for only DESeq2 results
+DEGs_OS <- hg38_genes[hg38_genes$gene_id %in% deseqRes_OS$gene_id]
+```
+
+Annotate Peak In Batch
+
+```{r}
+chpkno_786_H3K27ac <- lapply(peaks_786_H3K27ac, annotatePeakInBatch,
+                           AnnotationData = DEGs_786,
+                           featureType = "TSS",
+                           output = "nearestLocation",
+                           PeakLocForDistance = "start",
+                           FeatureLocForDistance = "TSS")
+
+chpkno_786_H3K4me1 <- lapply(peaks_786_H3K4me1, annotatePeakInBatch,
+                           AnnotationData = DEGs_786,
+                           featureType = "TSS",
+                           output = "nearestLocation",
+                           PeakLocForDistance = "start",
+                           FeatureLocForDistance = "TSS")
+
+chpkno_OS_H3K27ac <- lapply(peaks_OS_H3K27ac, annotatePeakInBatch,
+                           AnnotationData = DEGs_OS,
+                           featureType = "TSS",
+                           output = "nearestLocation",
+                           PeakLocForDistance = "start",
+                           FeatureLocForDistance = "TSS",)
+```
+
+
+```{r}
+# Test for statistically significant differences in distance to TSS between diffbind peaks and all called macs3 peaks for each cell line and histone mark
+
+# Prepare dataframes
+peakdists_macs_M1A_H3K27ac <- chpkno_786_H3K27ac$macs3_M1A_H3K27ac %>% as_tibble() %>% dplyr::select(distancetoFeature)
+peakdists_macs_786O_H3K27ac <- chpkno_786_H3K27ac$macs3_786O_H3K27ac %>% as_tibble() %>% dplyr::select(distancetoFeature)
+peakdists_diffbind_786_H3K27ac <- chpkno_786_H3K27ac$diffbind_786_H3K27ac %>% as_tibble() %>% dplyr::select(distancetoFeature)
+
+# Add columns with group/sample name and combine the dataframes
+peakdists_786_ls <- list(peakdists_macs_M1A_H3K27ac = peakdists_macs_M1A_H3K27ac,
+                      peakdists_macs_786O_H3K27ac = peakdists_macs_786O_H3K27ac,
+                      peakdists_diffbind_786_H3K27ac = peakdists_diffbind_786_H3K27ac)
+
+peakdists_786 <- do.call(rbind, lapply(names(peakdists_786_ls), function(name) {
+  df <- peakdists_786_ls[[name]]
+  df$group <- name
+  df
+}))
+# Perform Kruskal Wallace Test
+kruskal_result <- kruskal.test(distancetoFeature ~ group, data = peakdists_786)
+print(kruskal_result)
+
+# Perform pairwise Wilcox test to check which groups are different
+wilcox_result <- pairwise.wilcox.test(peakdists_786$distancetoFeature, peakdists_786$group,
+                 p.adjust.method = "BH")
+print(wilcox_result)
+################################################################
+# Test for statistically significant differences in distance to TSS between diffbind peaks and all called macs3 peaks for each cell line and histone mark
+
+# Prepare dataframes
+peakdists_macs_LM1_H3K27ac <- chpkno_OS_H3K27ac$macs3_LM1_H3K27ac %>% as_tibble() %>% dplyr::select(distancetoFeature)
+peakdists_macs_RC2_H3K27ac <- chpkno_OS_H3K27ac$macs3_RC2_H3K27ac %>% as_tibble() %>% dplyr::select(distancetoFeature)
+peakdists_diffbind_OS_H3K27ac <- chpkno_OS_H3K27ac$diffbind_OS_H3K27ac %>% as_tibble() %>% dplyr::select(distancetoFeature)
+
+# Add columns with group/sample name and combine the dataframes
+peakdists_OS_ls <- list(peakdists_macs_LM1_H3K27ac = peakdists_macs_LM1_H3K27ac,
+                      peakdists_macs_RC2_H3K27ac = peakdists_macs_RC2_H3K27ac,
+                      peakdists_diffbind_OS_H3K27ac = peakdists_diffbind_OS_H3K27ac)
+
+peakdists_OS <- do.call(rbind, lapply(names(peakdists_OS_ls), function(name) {
+  df <- peakdists_OS_ls[[name]]
+  df$group <- name
+  df
+}))
+# Perform Kruskal Wallace Test
+kruskal_result <- kruskal.test(distancetoFeature ~ group, data = peakdists_OS)
+print(kruskal_result)
+
+# Perform pairwise Wilcox test to check which groups are different
+wilcox_result <- pairwise.wilcox.test(peakdists_OS$distancetoFeature, peakdists_OS$group,
+                 p.adjust.method = "BH")
+print(wilcox_result)
+```
+
+## Make Venn Diagram of overlapping peaks
+
+```{r}
+# Find overlapping peaks
+overlapping_peaks_M1A <- findOverlapsOfPeaks(macs3_M1A_H3K27ac, 
+                                         macs3_M1A_H3K4me1, 
+                                         connectedPeaks = "keepAll")
+
+overlapping_peaks_786O <- findOverlapsOfPeaks(macs3_786O_H3K27ac, 
+                                         macs3_786O_H3K4me1, 
+                                         connectedPeaks = "keepAll")
+
+overlapping_peaks_M1A_LM1_H3K27ac <- findOverlapsOfPeaks(macs3_M1A_H3K27ac,
+                                                         macs3_LM1_H3K27ac,
+                                                         connectedPeaks = "keepAll")
+
+overlapping_peaks_786O_RC2_H3K27ac <- findOverlapsOfPeaks(macs3_786O_H3K27ac,
+                                                         macs3_RC2_H3K27ac,
+                                                         connectedPeaks = "keepAll")
+
+overlapping_peaks_786_OS_H3K27ac <- findOverlapsOfPeaks(macs3_786O_H3K27ac,
+                                                        macs3_RC2_H3K27ac,
+                                                        macs3_M1A_H3K27ac,
+                                                        macs3_LM1_H3K27ac,
+                                                        connectedPeaks = "keepAll")
+
+overlapping_peaks_diffbind_H3K27ac <- findOverlapsOfPeaks(diffbind_786_H3K27ac,
+                                                          diffbind_OS_H3K27ac,
+                                                        connectedPeaks = "keepAll")
+
+
+```
+
+
+```{r}
+# Venn diagram of overlapping H3K27ac and H3K4me1 peaks
+plot_title <- paste0("venn_overlaps_M1A_K27ac_K4me1.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 8, height = 8)
+print(makeVennDiagram(overlapping_peaks_M1A, connectedPeaks = "merge",
+                      NameOfPeaks = c("H3K27ac", "H3K4me1"),
+                        fill = c("azure2", "orchid"),
+                         col = c("red", "purple"),
+                        plot = TRUE))
+dev.off()
+
+plot_title <- paste0("venn_overlaps_M1A_K27ac_K4me1.svg")
+svg(file=file.path(figureDir, plot_title), width = 8, height = 8)
+print(makeVennDiagram(overlapping_peaks_M1A, connectedPeaks = "merge",
+                      NameOfPeaks = c("H3K27ac", "H3K4me1"),
+                        fill = c("azure2", "orchid"),
+                         col = c("red", "purple"),
+                        plot = TRUE))
+dev.off()
+######################################################################
+# Venn diagram of overlapping H3K27ac and H3K4me1 peaks
+plot_title <- paste0("venn_overlaps_786O_K27ac_K4me1.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 8, height = 8)
+print(makeVennDiagram(overlapping_peaks_786O, connectedPeaks = "merge",
+                       NameOfPeaks = c("H3K27ac", "H3K4me1"),
+                        fill = c("azure2", "orchid3"),
+                         col = c("#26b3ff", "mediumpurple"),
+                        plot = TRUE))
+dev.off()
+
+plot_title <- paste0("venn_overlaps_786O_K27ac_K4me1.svg")
+svg(file=file.path(figureDir, plot_title), width = 8, height = 8)
+print(makeVennDiagram(overlapping_peaks_786O, connectedPeaks = "merge",
+                       NameOfPeaks = c("H3K27ac", "H3K4me1"),
+                        fill = c("azure2", "orchid3"),
+                         col = c("#26b3ff", "mediumpurple"),
+                        plot = TRUE))
+dev.off()
+######################################################################
+# Venn diagram of overlapping H3K27ac and H3K4me1 peaks
+plot_title <- paste0("venn_overlaps_M1A_LM1_H3K27ac_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 8, height = 8)
+print(makeVennDiagram(overlapping_peaks_M1A_LM1_H3K27ac, connectedPeaks = "merge",
+                       NameOfPeaks = c("M1A", "LM1"),
+                        fill = c("azure2", "lightpink"),
+                         col = c("firebrick1", "firebrick"),
+                        plot = TRUE))
+dev.off()
+
+plot_title <- paste0("venn_overlaps_M1A_LM1_H3K27ac_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 8, height = 8)
+print(makeVennDiagram(overlapping_peaks_M1A_LM1_H3K27ac, connectedPeaks = "merge",
+                       NameOfPeaks = c("M1A", "LM1"),
+                        fill = c("azure2", "lightpink"),
+                         col = c("firebrick1", "firebrick"),
+                        plot = TRUE))
+dev.off()
+######################################################################
+# Venn diagram of overlapping H3K27ac and H3K4me1 peaks
+plot_title <- paste0("venn_overlaps_786O_RC2_H3K27ac_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 8, height = 8)
+print(makeVennDiagram(overlapping_peaks_786O_RC2_H3K27ac, connectedPeaks = "merge",
+                       NameOfPeaks = c("786-O", "RC2"),
+                        fill = c("azure2", "steelblue"),
+                         col = c("#26b3ff", "cyan3"),
+                        plot = TRUE))
+dev.off()
+
+plot_title <- paste0("venn_overlaps_786O_RC2_H3K27ac_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 8, height = 8)
+print(makeVennDiagram(overlapping_peaks_786O_RC2_H3K27ac, connectedPeaks = "merge",
+                       NameOfPeaks = c("786-O", "RC2"),
+                        fill = c("azure2", "steelblue"),
+                         col = c("#26b3ff", "cyan3"),
+                        plot = TRUE))
+dev.off()
+######################################################################
+# Venn diagram of overlapping H3K27ac and H3K4me1 peaks
+plot_title <- paste0("venn_overlaps_786_OS_H3K27ac_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 10, height = 10)
+print(makeVennDiagram(overlapping_peaks_786_OS_H3K27ac, connectedPeaks = "merge",
+                       NameOfPeaks = c("786-O", "RC2", "M1A", "LM1"),
+                        fill = c("azure2", "steelblue", "plum1", "lightpink"),
+                         col = c("#26b3ff", "cyan3", "firebrick1", "firebrick"),
+                        plot = TRUE))
+dev.off()
+
+plot_title <- paste0("venn_overlaps_786_OS_H3K27ac_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 10, height = 10)
+print(makeVennDiagram(overlapping_peaks_786_OS_H3K27ac, connectedPeaks = "merge",
+                       NameOfPeaks = c("786-O", "RC2", "M1A", "LM1"),
+                        fill = c("azure2", "steelblue", "plum1", "lightpink"),
+                         col = c("#26b3ff", "cyan3", "firebrick1", "firebrick"),
+                        plot = TRUE))
+dev.off()
+
+######################################################################
+# Venn diagram of overlapping H3K27ac and H3K4me1 peaks
+plot_title <- paste0("venn_overlaps_diffbind_786_OS_H3K27ac_H3K27ac.pdf")
+pdf(file=file.path(figureDir, plot_title), width = 12, height = 12)
+print(makeVennDiagram(overlapping_peaks_diffbind_H3K27ac, connectedPeaks = "merge",
+                       NameOfPeaks = c("786-O vs M1A", "OS-RC2 vs LM1"),
+                        fill = c("firebrick", "steelblue"),
+                         col = c("red", "blue"),
+                        plot = TRUE))
+dev.off()
+
+plot_title <- paste0("venn_overlaps_diffbind_786_OS_H3K27ac_H3K27ac.svg")
+svg(file=file.path(figureDir, plot_title), width = 12, height = 12)
+print(makeVennDiagram(overlapping_peaks_diffbind_H3K27ac, connectedPeaks = "merge",
+                       NameOfPeaks = c("786-O vs M1A", "OS-RC2 vs LM1"),
+                        fill = c("firebrick", "steelblue"),
+                         col = c("red", "blue"),
+                        plot = TRUE))
+dev.off()
+```
+
+
